@@ -4,7 +4,15 @@
 
 ### Every Hash Is a Chance.
 
-**Free & Open-Source Solo Mining Software** (EBF4000 - v1.0)
+**[Download for Windows](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest)**
+
+First time with the ready Windows package (verified on a clean Windows PC):
+
+1. Download **`EBF4000-v*-windows.zip`** from the link above, then **extract** the zip to a normal folder (Desktop or Documents — do not run from inside WinRAR/7-Zip).
+2. Double-click **`start.bat`**. If Python is missing, accept the offered auto-install (PATH is enabled for you). Wait until the app window opens.
+3. Choose a network, enter your payout address, then press **Start**. Miners (XMRig/Rigel) download only after in-app consent.
+
+**Free & Open-Source Solo Mining Software** (EBF4000 - v1.0.7)
 
 Easy Block Finder 4000 is an independent, open-source **solo mining** app for Windows (BTC, BCH, XMR, RVN, ERG).  
 It is not a simulation. **No earnings or hashrate are guaranteed.**
@@ -30,14 +38,12 @@ Feedback: **Help → Feedback / Suggestions…** (`sametkuzu82@gmail.com`).
 
 ## Setup (Windows)
 
+**Ready package:** use [Download for Windows](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest) and the three steps at the top of this README.
+
+**From source** (after cloning this repo):
+
 ```bat
 start.bat
-```
-
-```powershell
-$env:PYTHONPATH="src"
-$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"
-python -m pytest -q
 ```
 
 Data folder: `%LOCALAPPDATA%\EasyBlockFinder4000`  
@@ -50,8 +56,8 @@ Data folder: `%LOCALAPPDATA%\EasyBlockFinder4000`
 | Bitcoin (BTC) | OpenCL | OpenCL (driver) | OpenCL (driver) |
 | Bitcoin Cash (BCH) | OpenCL | OpenCL (driver) | OpenCL (driver) |
 | Monero (XMR) | — (CPU via XMRig) | — (CPU via XMRig) | — (CPU via XMRig) |
-| Ravencoin (RVN) | Rigel / CUDA | Not in v1.0 | Not in v1.0 |
-| Ergo (ERG) | Rigel / CUDA | Not in v1.0 | Not in v1.0 |
+| Ravencoin (RVN) | Rigel / CUDA | Not yet | Not yet |
+| Ergo (ERG) | Rigel / CUDA | Not yet | Not yet |
 
 Support depends on installed drivers and free VRAM (RVN/ERG). Without a usable GPU/OpenCL path, native BTC/BCH **fail explicitly** (no silent CPU fallback).
 
@@ -79,9 +85,18 @@ Full text: **[DISCLAIMER.md](DISCLAIMER.md)**. Easy Block Finder 4000 is experim
 - **Temperature unreadable:** If the app cannot read CPU/GPU temperature, the automatic thermal guard **does not run**. Mining in that state can overheat or damage hardware. Start is blocked unless you explicitly accept the on-screen liability notice. Authors are **not liable** for damage, data loss, or other consequences of continuing without a temp guard. See [DISCLAIMER.md](DISCLAIMER.md).
 - **Authorization:** Use only on hardware you own or are explicitly allowed to operate.
 
-## Download
+## Developers
 
-Source lives in this repository. Installable packages (when published) are under [Releases](https://github.com/easyblockfinder/easy-block-finder-4000/releases).
+From a source checkout:
+
+```powershell
+$env:PYTHONPATH="src"
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"
+python -m pytest -q
+```
+
+Signed update packages: see [RELEASE_SIGNING.md](RELEASE_SIGNING.md).  
+Latest Windows ZIP: [Releases](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest).
 
 ## License & trademarks
 
