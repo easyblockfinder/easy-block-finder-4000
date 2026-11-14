@@ -4,8 +4,11 @@
 
 ### Every Hash Is a Chance.
 
-**Website:** [easyblockfinder.com](https://easyblockfinder.com)  
-**[Download for Windows](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest)**
+**Website:** [https://easyblockfinder.com](https://easyblockfinder.com)
+
+**Download for Windows:** [Latest release (ZIP)](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest)
+
+---
 
 First time with the ready Windows package (verified on a clean Windows PC):
 
