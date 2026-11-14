@@ -775,7 +775,10 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(0)
         QTimer.singleShot(50, self._startup_clear_orphans)
         QTimer.singleShot(400, self._maybe_offer_missing_miners)
-        QTimer.singleShot(2500, lambda: self._check_for_updates(manual=False))
+        # Every launch: check GitHub and ask if a newer signed release exists
+        QTimer.singleShot(
+            2000, lambda: self._check_for_updates(manual=False, every_launch=True)
+        )
 
     def _build_menu(self) -> None:
         help_menu = self.menuBar().addMenu("&Help")
@@ -933,7 +936,7 @@ class MainWindow(QMainWindow):
         # Let the spinner paint before the worker / GPU probes start
         QTimer.singleShot(40, _start)
 
-    def _check_for_updates(self, *, manual: bool) -> None:
+    def _check_for_updates(self, *, manual: bool, every_launch: bool = False) -> None:
         import time
 
         from update.service import should_check_now
@@ -944,12 +947,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Updates", "Update check already running.")
             return
 
-        interval = float(self._cfg.get("update_check_interval_hours") or 24.0)
-        last = float(self._cfg.get("update_last_check_ts") or 0.0)
-        if not manual and not should_check_now(last, interval):
-            return
+        # every_launch / manual: always hit the network. Background-only path
+        # (if ever used) still respects the interval setting.
+        if not manual and not every_launch:
+            interval = float(self._cfg.get("update_check_interval_hours") or 24.0)
+            last = float(self._cfg.get("update_last_check_ts") or 0.0)
+            if not should_check_now(last, interval):
+                return
 
-        worker = UpdateCheckWorker(force=manual, parent=self)
+        worker = UpdateCheckWorker(force=True, parent=self)
         self._update_check_worker = worker
 
         def _ok(offer) -> None:
@@ -963,8 +969,14 @@ class MainWindow(QMainWindow):
                         "You are on the latest release (or no newer stable ZIP is published).",
                     )
                 return
+            # "Later" only suppresses until the next app launch (every_launch asks again)
             skipped = str(self._cfg.get("update_skipped_version") or "")
-            if not manual and skipped and skipped == offer.remote_version:
+            if (
+                not manual
+                and not every_launch
+                and skipped
+                and skipped == offer.remote_version
+            ):
                 return
             self._prompt_update(offer)
 

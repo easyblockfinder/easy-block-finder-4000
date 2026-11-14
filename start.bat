@@ -161,9 +161,10 @@ if /i "%~1"=="console" (
   exit /b 0
 )
 
+REM Launch GUI detached, then close this console (do not leave a stuck CMD)
 start "" "%PYTHONW%" "%~dp0src\main.py"
 endlocal
-exit /b 0
+exit 0
 
 
 REM ========== Guides ==========

@@ -28,14 +28,15 @@ def _fmt_size(n: int) -> str:
 class UpdateAvailableDialog(QDialog):
     def __init__(self, offer: UpdateOffer, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Update available")
+        self.setWindowTitle("Install update?")
         self.setMinimumSize(520, 420)
         self._choice = "later"
         root = QVBoxLayout(self)
 
         title = QLabel(
-            f"Easy Block Finder 4000 {offer.remote_version} is available\n"
-            f"(you have {offer.current_version})"
+            f"A newer version is available: {offer.remote_version}\n"
+            f"(you have {offer.current_version})\n\n"
+            f"Install Easy Block Finder 4000 {offer.remote_version} now?"
         )
         title.setStyleSheet("font-weight: 700; font-size: 14px;")
         title.setWordWrap(True)
@@ -57,8 +58,10 @@ class UpdateAvailableDialog(QDialog):
         root.addWidget(notes, 1)
 
         hint = QLabel(
-            "Update Now downloads the signed package, verifies minisign + SHA-256, "
-            "stops mining, then applies files via an external updater. "
+            "Nothing installs until you click Yes. "
+            "Yes downloads the signed package, verifies minisign + SHA-256, "
+            "stops mining, then applies files via an external updater "
+            "(no leftover CMD window). "
             "Your settings, wallet addresses, and AppData miners are kept. "
             "Windows Defender is not disabled."
         )
@@ -66,8 +69,8 @@ class UpdateAvailableDialog(QDialog):
         root.addWidget(hint)
 
         row = QHBoxLayout()
-        btn_later = QPushButton("Later")
-        btn_update = QPushButton("Update Now")
+        btn_later = QPushButton("Not now")
+        btn_update = QPushButton("Yes, install update")
         btn_update.setDefault(True)
         btn_later.clicked.connect(self._later)
         btn_update.clicked.connect(self._now)
