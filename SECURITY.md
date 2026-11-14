@@ -12,6 +12,18 @@ https://github.com/easyblockfinder/easy-block-finder-4000
 
 Official releases are published through GitHub Releases.
 
+### Application auto-update
+
+Stable updates are offered from GitHub Releases (`EBF4000-v*-windows.zip` + `SHA256SUMS` + `SHA256SUMS.minisig`).
+
+- Checks run in the background (default every 24 hours) or via **Help → Check for Updates…**.
+- Installation requires explicit **Update Now** confirmation.
+- The app verifies the minisign signature with a **pinned public key** shipped in the install (`src/update/trusted_keys.py`), then checks the ZIP SHA-256 from the signed manifest. A GitHub checksum alone is not treated as publisher authentication.
+- Files are applied by an external updater after the UI exits; AppData settings, wallets, logs, and consented miners are preserved.
+- Failed updates restore the previous install tree. Windows Defender is never disabled.
+
+Maintainer signing steps: [RELEASE_SIGNING.md](RELEASE_SIGNING.md).
+
 ### Antivirus and Windows Defender
 
 Cryptocurrency mining software may trigger security warnings due to its behavior or third-party mining engines.

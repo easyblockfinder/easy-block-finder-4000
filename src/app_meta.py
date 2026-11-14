@@ -6,7 +6,7 @@ from pathlib import Path
 
 APP_NAME = "Easy Block Finder 4000"
 APP_SHORT = "EBF4000"
-APP_VERSION = "1.0"
+APP_VERSION = "1.0.1"
 # Version label shown to the user
 APP_VERSION_LABEL = f"{APP_SHORT} - v{APP_VERSION}"
 # window / tray
@@ -24,8 +24,9 @@ XMRIG_ORPHAN_TOKENS = (XMRIG_HTTP_TOKEN, "soloblockstrike")
 XMRIG_HTTP_PORT = 40789
 
 # Brand assets (repo root /assets)
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-ASSETS_DIR = _REPO_ROOT / "assets"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = REPO_ROOT  # back-compat
+ASSETS_DIR = REPO_ROOT / "assets"
 ICON_PATH = ASSETS_DIR / "ebf4000_icon.png"
 LOGO_PATH = ASSETS_DIR / "ebf4000_logo.png"
 

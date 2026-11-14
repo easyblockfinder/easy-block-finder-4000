@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 from monitor.hardware_gate import network_block_reason
 from networks.profiles import get_profile, list_profiles, normalize_network_id
 from ui.donate_dialog import DonateDialog
+from ui.hardware_detect_page import HardwareDetectPage
 from ui.network_select import NetworkSelectPage
 from ui.settings_store import load_settings, save_settings, settings_file
 from worker.controller import MiningController, MiningStats
@@ -255,15 +256,36 @@ class MainWindow(QMainWindow):
         self._last_block_notify_key: str | None = None
         self._tray_exit = False
         self._stats_url = ""
+        self._defender_help_shown = False
+        self._update_check_worker = None
+        self._update_prepare_worker = None
+        self._update_progress_dlg = None
+        self._pending_update = None  # PreparedUpdate while stopping for apply
+        self._miner_dl_worker = None
+        self._miner_dl_dialog = None
+        self._after_miner_download = None  # optional Callable[[], None]
+        self._capacity_worker = None
+        self._capacity_blocks: dict[str, str] = {}
+
+        self._build_menu()
 
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
+        # 0: network select → 1: optional hardware → 2: mining
         self._select_page = NetworkSelectPage(
-            self._network_id, blocked=self._network_blocked_map()
+            self._network_id,
+            blocked=self._network_blocked_map(),
+            show_hardware_button=True,
         )
         self._select_page.network_chosen.connect(self._on_network_chosen)
+        self._select_page.hardware_check_clicked.connect(self._on_open_hardware_check)
         self._stack.addWidget(self._select_page)
+
+        self._hw_page = HardwareDetectPage()
+        self._hw_page.continue_clicked.connect(self._on_hardware_continue)
+        self._hw_page.back_clicked.connect(self._on_hardware_back_to_network)
+        self._stack.addWidget(self._hw_page)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -414,32 +436,6 @@ class MainWindow(QMainWindow):
         self.lbl_thermal_src.setObjectName("statKey")
         self.lbl_thermal_src.setWordWrap(True)
         s_layout.addWidget(self.lbl_thermal_src)
-
-        self.chk_allow_no_temp = QCheckBox(
-            "Allow mining without temperature (unsafe — no thermal guard)"
-        )
-        self.chk_allow_no_temp.setChecked(
-            bool(self._cfg.get("allow_mine_without_temp", False))
-        )
-        self.chk_allow_no_temp.toggled.connect(self._on_allow_no_temp_toggled)
-        s_layout.addWidget(self.chk_allow_no_temp)
-
-        self.chk_miner_consent = QCheckBox(
-            "Allow download of official miners when needed (XMRig / Rigel)"
-        )
-        self.chk_miner_consent.setChecked(
-            bool(self._cfg.get("miner_download_consent", False))
-        )
-        self.chk_miner_consent.toggled.connect(self._persist_form)
-        s_layout.addWidget(self.chk_miner_consent)
-        miner_hint = QLabel(
-            "Binaries are not in the app package. With consent, only the engine for "
-            "the network you Start is fetched from the official GitHub release and "
-            "SHA-256 verified. Antivirus is never disabled by this app."
-        )
-        miner_hint.setObjectName("tagline")
-        miner_hint.setWordWrap(True)
-        s_layout.addWidget(miner_hint)
 
         self.lbl_thermal_unsafe = QLabel("")
         self.lbl_thermal_unsafe.setWordWrap(True)
@@ -758,16 +754,257 @@ class MainWindow(QMainWindow):
 
         self._setup_tray()
         self._apply_network_to_ui()
+        self._ensure_idle_on_launch()
+        # Always open on network selection (never auto-resume mining / last mine page)
         self._stack.setCurrentIndex(0)
+        QTimer.singleShot(400, self._maybe_offer_missing_miners)
+        QTimer.singleShot(2500, lambda: self._check_for_updates(manual=False))
+
+    def _build_menu(self) -> None:
+        help_menu = self.menuBar().addMenu("&Help")
+        act_how = QAction("How to Use…", self)
+        act_how.triggered.connect(self._show_howto)
+        help_menu.addAction(act_how)
+        act_fb = QAction("Feedback / Suggestions…", self)
+        act_fb.triggered.connect(self._show_feedback)
+        help_menu.addAction(act_fb)
+        act_upd = QAction("Check for Updates…", self)
+        act_upd.triggered.connect(lambda: self._check_for_updates(manual=True))
+        help_menu.addAction(act_upd)
+
+    def _show_howto(self) -> None:
+        from ui.howto_dialog import HowToUseDialog
+
+        HowToUseDialog(self).exec()
+
+    def _show_feedback(self) -> None:
+        from ui.feedback_dialog import FeedbackDialog
+
+        FeedbackDialog(self).exec()
 
     def _network_blocked_map(self) -> dict[str, str]:
-        """Network picker: cpu-only marker only (no OpenCL probe)."""
+        """Merge light gates + last capacity probe results."""
         out: dict[str, str] = {}
         for prof in list_profiles():
             reason = network_block_reason(prof.id, probe_gpu=False)
             if reason:
                 out[prof.id] = reason
+        for nid, reason in self._capacity_blocks.items():
+            if reason:
+                out[nid] = reason
         return out
+
+    def _ensure_idle_on_launch(self) -> None:
+        """Never resume mining after restart; clear leftover external miners."""
+        try:
+            from engines.orphan_miners import kill_app_miners
+
+            kill_app_miners()
+        except Exception:
+            pass
+        self.start_btn.setEnabled(bool(self._profile.mining_ready))
+        self.stop_btn.setEnabled(False)
+        self.address_edit.setEnabled(True)
+        self.test_mode.setEnabled(True)
+        self.btn_change_network.setEnabled(True)
+        self.lbl_conn.setText("Not connected")
+        self.lbl_status.setText("Ready — choose Start after selecting a network.")
+        self.lbl_rate.setText("0 H/s")
+
+    def _on_open_hardware_check(self) -> None:
+        self._hw_page.refresh()
+        self._stack.setCurrentIndex(1)
+
+    def _on_hardware_back_to_network(self) -> None:
+        self._stack.setCurrentIndex(0)
+
+    def _on_hardware_continue(self) -> None:
+        """Optional hardware page → capacity probe → network list."""
+        from ui.capacity_worker import CapacityProbeWorker
+
+        self._stack.setCurrentIndex(0)
+        self._select_page.set_busy(
+            True,
+            "Checking GPU capacity (OpenCL / NVIDIA VRAM, KawPoW & Autolykos2)…",
+        )
+
+        if self._capacity_worker is not None and self._capacity_worker.isRunning():
+            return
+
+        worker = CapacityProbeWorker(parent=self)
+        self._capacity_worker = worker
+
+        def _ok(blocks: object) -> None:
+            mapped: dict[str, str] = {}
+            if isinstance(blocks, dict):
+                for k, v in blocks.items():
+                    if v:
+                        mapped[str(k)] = str(v)
+            self._capacity_blocks = mapped
+            self._select_page.apply_blocks(self._network_blocked_map())
+            disabled = [k.upper() for k in mapped]
+            msg = (
+                "Capacity check done. Disabled: " + ", ".join(disabled)
+                if disabled
+                else "Capacity check done — all probed networks look usable."
+            )
+            self._select_page.set_busy(False, msg)
+
+        def _fail(err: str) -> None:
+            self._select_page.set_busy(
+                False,
+                f"Capacity check failed: {err}. GPU networks may stay limited until you retry.",
+            )
+
+        worker.finished_ok.connect(_ok)
+        worker.failed.connect(_fail)
+        worker.start()
+
+    def _check_for_updates(self, *, manual: bool) -> None:
+        import time
+
+        from update.service import should_check_now
+        from ui.update_worker import UpdateCheckWorker
+
+        if self._update_check_worker is not None and self._update_check_worker.isRunning():
+            if manual:
+                QMessageBox.information(self, "Updates", "Update check already running.")
+            return
+
+        interval = float(self._cfg.get("update_check_interval_hours") or 24.0)
+        last = float(self._cfg.get("update_last_check_ts") or 0.0)
+        if not manual and not should_check_now(last, interval):
+            return
+
+        worker = UpdateCheckWorker(force=manual, parent=self)
+        self._update_check_worker = worker
+
+        def _ok(offer) -> None:
+            save_settings({"update_last_check_ts": time.time()})
+            self._cfg["update_last_check_ts"] = time.time()
+            if offer is None:
+                if manual:
+                    QMessageBox.information(
+                        self,
+                        "Updates",
+                        "You are on the latest release (or no newer stable ZIP is published).",
+                    )
+                return
+            skipped = str(self._cfg.get("update_skipped_version") or "")
+            if not manual and skipped and skipped == offer.remote_version:
+                return
+            self._prompt_update(offer)
+
+        def _fail(msg: str) -> None:
+            save_settings({"update_last_check_ts": time.time()})
+            self._cfg["update_last_check_ts"] = time.time()
+            if manual:
+                QMessageBox.information(
+                    self,
+                    "Updates",
+                    "Could not check for updates right now.\n\n"
+                    f"{msg}\n\n"
+                    "The app will keep running normally.",
+                )
+
+        worker.finished_ok.connect(_ok)
+        worker.failed.connect(_fail)
+        worker.start()
+
+    def _prompt_update(self, offer) -> None:
+        from ui.update_dialog import UpdateAvailableDialog
+
+        dlg = UpdateAvailableDialog(offer, self)
+        from PyQt6.QtWidgets import QDialog
+
+        if dlg.exec() != QDialog.DialogCode.Accepted or dlg.choice != "now":
+            save_settings({"update_skipped_version": offer.remote_version})
+            self._cfg["update_skipped_version"] = offer.remote_version
+            return
+        self._start_update_download(offer)
+
+    def _start_update_download(self, offer) -> None:
+        from ui.update_dialog import UpdateProgressDialog
+        from ui.update_worker import UpdatePrepareWorker
+
+        if self._update_prepare_worker is not None and self._update_prepare_worker.isRunning():
+            return
+
+        progress = UpdateProgressDialog(self)
+        self._update_progress_dlg = progress
+        progress.show()
+
+        worker = UpdatePrepareWorker(offer, parent=self)
+        self._update_prepare_worker = worker
+
+        def _prog(phase: str, received: int, total) -> None:
+            progress.set_phase(phase, received, total)
+
+        def _ok(prepared) -> None:
+            progress.set_phase("stop", 0, None)
+            self._apply_prepared_update(prepared, progress)
+
+        def _fail(msg: str) -> None:
+            progress.close()
+            self._update_progress_dlg = None
+            QMessageBox.warning(
+                self,
+                "Update failed",
+                f"The update was not installed. Your current version is unchanged.\n\n{msg}",
+            )
+
+        worker.progress.connect(_prog)
+        worker.finished_ok.connect(_ok)
+        worker.failed.connect(_fail)
+        worker.start()
+
+    def _apply_prepared_update(self, prepared, progress_dlg) -> None:
+        """Stop mining safely, launch external updater, quit."""
+        from update.service import UpdateError, launch_external_updater
+
+        self._pending_update = prepared
+
+        def _after_stop(ok: bool) -> None:
+            if not ok:
+                progress_dlg.close()
+                self._update_progress_dlg = None
+                self._pending_update = None
+                QMessageBox.warning(
+                    self,
+                    "Update canceled",
+                    "Could not stop mining safely. Update was not applied.",
+                )
+                return
+            try:
+                progress_dlg.set_phase("apply", 0, None)
+                launch_external_updater(prepared)
+            except UpdateError as exc:
+                progress_dlg.close()
+                self._update_progress_dlg = None
+                self._pending_update = None
+                QMessageBox.warning(self, "Update failed", str(exc))
+                return
+            progress_dlg.close()
+            self._update_progress_dlg = None
+            self._tray_exit = True
+            if self.tray is not None:
+                self.tray.hide()
+            QApplication.instance().quit()
+
+        # Always go through stop path (even if idle) to clear orphans
+        if self.controller.is_running() or self._stop_busy:
+            self._begin_async_stop(_after_stop)
+        else:
+            try:
+                from engines.orphan_miners import list_app_miners
+
+                orphans = list_app_miners()
+            except Exception:
+                orphans = []
+            if orphans:
+                self._begin_async_stop(_after_stop)
+            else:
+                _after_stop(True)
 
     def _apply_network_to_ui(self) -> None:
         self._profile = get_profile(self._network_id)
@@ -869,6 +1106,8 @@ class MainWindow(QMainWindow):
     def _on_network_chosen(self, network_id: str) -> None:
         if not self._switch_network(network_id):
             return
+        # Idle mining page — user must press Start (no auto-resume)
+        self._ensure_idle_on_launch()
         self._stack.setCurrentWidget(self._mine_scroll)
 
     def _on_pick_gpu(self) -> None:
@@ -931,14 +1170,8 @@ class MainWindow(QMainWindow):
     def _on_change_network(self) -> None:
         if not self._ensure_stopped_for_network_switch():
             return
-        self._select_page = NetworkSelectPage(
-            self._network_id, blocked=self._network_blocked_map()
-        )
-        self._select_page.network_chosen.connect(self._on_network_chosen)
-        old = self._stack.widget(0)
-        self._stack.removeWidget(old)
-        old.deleteLater()
-        self._stack.insertWidget(0, self._select_page)
+        self._capacity_blocks = {}
+        self._select_page.apply_blocks(self._network_blocked_map())
         self._stack.setCurrentIndex(0)
 
     def _set_stop_busy_ui(self, busy: bool) -> None:
@@ -965,6 +1198,7 @@ class MainWindow(QMainWindow):
         self._stop_worker = worker
 
         def _finished(ok: bool) -> None:
+            self._force_stop_all_miners()
             self._set_stop_busy_ui(False)
             on_done(bool(ok))
             worker.deleteLater()
@@ -1053,8 +1287,12 @@ class MainWindow(QMainWindow):
                 "test_mode": self.test_mode.isChecked(),
                 "cpu_thread_limit": self.cpu_threads.value(),
                 "pause_on_battery": self.pause_battery.isChecked(),
-                "allow_mine_without_temp": self.chk_allow_no_temp.isChecked(),
-                "miner_download_consent": self.chk_miner_consent.isChecked(),
+                "allow_mine_without_temp": bool(
+                    self._cfg.get("allow_mine_without_temp", False)
+                ),
+                "miner_download_consent": bool(
+                    self._cfg.get("miner_download_consent", False)
+                ),
                 "gpu_bus_id": self._cfg.get("gpu_bus_id"),
                 "gpu_uuid": self._cfg.get("gpu_uuid"),
                 "window_width": self.width(),
@@ -1083,13 +1321,14 @@ class MainWindow(QMainWindow):
             self.resume_temp.value(),
         )
 
-    def _on_allow_no_temp_toggled(self, _checked: bool = False) -> None:
-        self._refresh_thermal_unsafe_banner()
-        self._persist_form()
+    def _allow_mine_without_temp(self) -> bool:
+        return bool(self._cfg.get("allow_mine_without_temp", False))
+
+    def _miner_consent_ok(self) -> bool:
+        return bool(self._cfg.get("miner_download_consent", False))
 
     def _refresh_thermal_unsafe_banner(self, *, running_without_temp: bool = False) -> None:
-        allow = self.chk_allow_no_temp.isChecked()
-        if allow or running_without_temp:
+        if self._allow_mine_without_temp() or running_without_temp:
             self.lbl_thermal_unsafe.setText(
                 "UNSAFE: automatic thermal protection is off — monitor GPU/CPU heat manually."
             )
@@ -1101,41 +1340,137 @@ class MainWindow(QMainWindow):
     def _confirm_mine_without_temp(self, detail: str) -> bool:
         """
         Temp unreadable and override off.
-        Returns True if user allows this start (once or permanently).
+        Popup liability disclaimer; Continues only after explicit acknowledgement.
         """
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Temperature unreadable")
-        box.setText(
-            "Temperature cannot be read. Automatic thermal pause is unavailable.\n\n"
-            "Mining without a temperature guard can damage hardware."
+        from ui.thermal_disclaimer_dialog import (
+            ThermalDisclaimerDialog,
+            ask_thermal_disclaimer,
         )
-        box.setInformativeText(detail)
-        once = box.addButton(
-            "Mine once without guard", QMessageBox.ButtonRole.AcceptRole
-        )
-        always = box.addButton(
-            "Always allow (unsafe)", QMessageBox.ButtonRole.DestructiveRole
-        )
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is always:
-            self.chk_allow_no_temp.setChecked(True)
-            self._persist_form()
+
+        choice = ask_thermal_disclaimer(self, detail)
+        if choice == ThermalDisclaimerDialog.RESULT_ALWAYS:
+            save_settings({"allow_mine_without_temp": True})
+            self._cfg["allow_mine_without_temp"] = True
+            self._refresh_thermal_unsafe_banner()
             return True
-        if clicked is once:
+        if choice == ThermalDisclaimerDialog.RESULT_ONCE:
             return True
         return False
 
-    def _ensure_external_miner_ready(self) -> bool:
+    def _maybe_offer_missing_miners(self) -> None:
+        """First window show: offer XMRig/Rigel download if not installed (pre-selected)."""
+        if bool(self._cfg.get("miner_startup_offer_done", False)):
+            return
+        from engines.miner_catalog import list_missing_miners, save_consent
+        from ui.miner_consent_dialog import ask_startup_miner_download
+
+        missing = list_missing_miners()
+        if not missing:
+            save_settings({"miner_startup_offer_done": True})
+            self._cfg["miner_startup_offer_done"] = True
+            return
+
+        selected = ask_startup_miner_download(self, missing)
+        save_settings({"miner_startup_offer_done": True})
+        self._cfg["miner_startup_offer_done"] = True
+        if selected is None:
+            return
+        if not selected:
+            return
+
+        save_consent(True)
+        self._cfg["miner_download_consent"] = True
+        self._download_miners_with_ui(selected)
+
+    def _download_miners_with_ui(
+        self,
+        miner_ids: list[str],
+        *,
+        on_success=None,
+    ) -> None:
+        """
+        Download + verify with a progress dialog (background thread).
+        on_success() is called after the dialog closes on success (optional).
+        """
+        from engines.miner_catalog import get_miner_info
+        from engines.windows_security import looks_like_defender_block
+        from ui.defender_help_dialog import show_defender_help
+        from ui.miner_download_dialog import MinerDownloadProgressDialog
+        from ui.miner_download_worker import MinerDownloadWorker
+
+        if not miner_ids:
+            if on_success:
+                on_success()
+            return
+
+        if self._miner_dl_worker is not None and self._miner_dl_worker.isRunning():
+            QMessageBox.information(
+                self, "Download in progress", "A miner download is already running."
+            )
+            return
+
+        self._after_miner_download = on_success
+        dlg = MinerDownloadProgressDialog(parent=self)
+        self._miner_dl_dialog = dlg
+        worker = MinerDownloadWorker(miner_ids, parent=self)
+        self._miner_dl_worker = worker
+        _fail_name = {"id": ""}
+
+        def _started(mid: str, index: int, total: int) -> None:
+            try:
+                name = get_miner_info(mid).display_name
+            except Exception:
+                name = mid
+            _fail_name["id"] = name
+            dlg.set_miner_title(name, index, total)
+            dlg.append_log(f"—— {name} ——")
+
+        def _prog(_mid: str, phase: str, received: int, total, detail: str) -> None:
+            dlg.set_progress(phase, received, total, detail)
+
+        def _ok() -> None:
+            dlg.mark_success("All selected miners downloaded and verified.")
+
+        def _fail(mid: str, message: str) -> None:
+            try:
+                name = get_miner_info(mid).display_name
+            except Exception:
+                name = mid
+            _fail_name["id"] = name
+            detail = (
+                f"Could not download or verify {name}.\n\n{message}\n\n"
+                "Your previous install (if any) was left unchanged. "
+                "This app does not disable Windows Defender."
+            )
+            dlg.mark_error(detail)
+
+        worker.miner_started.connect(_started)
+        worker.progress.connect(_prog)
+        worker.finished_ok.connect(_ok)
+        worker.failed.connect(_fail)
+        worker.start()
+        dlg.exec()
+        self._miner_dl_dialog = None
+        failed = dlg.failed
+        cb = self._after_miner_download
+        self._after_miner_download = None
+        if failed:
+            if looks_like_defender_block(RuntimeError(dlg.log.toPlainText())):
+                show_defender_help(self, _fail_name["id"] or "miner")
+            return
+        # After first-run miner install, refresh detection on the hardware page
+        if self._stack.currentWidget() is self._hw_page:
+            self._hw_page.refresh()
+        if cb:
+            cb()
+
+    def _ensure_external_miner_ready(self, *, on_ready=None) -> bool:
         """
         Consent + download only the miner required for the current network.
-        Returns False if the user denied consent or download failed.
+        Returns True if already ready. Returns False if declined or download started
+        (on_ready called after a successful download).
         """
-        from engines.fetch_miner import ensure_miner
         from engines.miner_catalog import (
-            get_miner_info,
             is_miner_installed,
             miner_id_for_network,
             save_consent,
@@ -1146,52 +1481,27 @@ class MainWindow(QMainWindow):
         if not miner_id:
             return True  # native OpenCL path — no external miner
 
-        if is_miner_installed(miner_id) and self.chk_miner_consent.isChecked():
+        if is_miner_installed(miner_id) and self._miner_consent_ok():
             return True
 
-        if not self.chk_miner_consent.isChecked():
+        if not self._miner_consent_ok():
             if not ask_miner_download_consent(self, [miner_id]):
                 QMessageBox.information(
                     self,
                     "Download declined",
                     "Mining with this network needs an official miner download. "
-                    "You can enable consent under Settings later.",
+                    "You can accept the download prompt when you Start again.",
                 )
                 return False
-            self.chk_miner_consent.setChecked(True)
             save_consent(True)
+            self._cfg["miner_download_consent"] = True
             self._persist_form()
 
         if is_miner_installed(miner_id):
             return True
 
-        info = get_miner_info(miner_id)
-        QMessageBox.information(
-            self,
-            "Downloading miner",
-            f"Downloading {info.display_name} {info.version} from the official release.\n"
-            f"{info.url}\n\n"
-            "The file will be SHA-256 verified before use. This may take a minute.",
-        )
-        try:
-            from PyQt6.QtWidgets import QApplication
-
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
-                ensure_miner(miner_id, reverify=True, require_consent=True)
-            finally:
-                QApplication.restoreOverrideCursor()
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Miner download failed",
-                f"Could not download or verify {info.display_name}.\n\n"
-                f"{exc}\n\n"
-                "Check your network connection and try Start again. "
-                "This app does not disable Windows Defender.",
-            )
-            return False
-        return True
+        self._download_miners_with_ui([miner_id], on_success=on_ready)
+        return False
 
     def _on_start(self) -> None:
         self._persist_form()
@@ -1225,12 +1535,18 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if not self._ensure_external_miner_ready():
+        if not self._ensure_external_miner_ready(on_ready=self._begin_mining_after_gates):
             return
+
+        self._begin_mining_after_gates()
+
+    def _begin_mining_after_gates(self) -> None:
+        """Thermal gate + controller.start (after miner is ready)."""
+        self._defender_help_shown = False
 
         from monitor.thermal_probe import probe_temperature_readable
 
-        allow_no_temp = self.chk_allow_no_temp.isChecked()
+        allow_no_temp = self._allow_mine_without_temp()
         temp_ok, temp_detail = probe_temperature_readable(
             self._network_id,
             gpu_bus_id=str(self._cfg.get("gpu_bus_id") or ""),
@@ -1262,7 +1578,14 @@ class MainWindow(QMainWindow):
                 allow_mine_without_temp=allow_no_temp,
             )
         except Exception as exc:
-            QMessageBox.warning(self, "Could not start", str(exc))
+            from engines.windows_security import looks_like_defender_block
+            from ui.defender_help_dialog import show_defender_help
+
+            if looks_like_defender_block(exc):
+                label = "XMRig" if self._network_id == "xmr" else "Rigel"
+                show_defender_help(self, label)
+            else:
+                QMessageBox.warning(self, "Could not start", str(exc))
             return
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -1390,10 +1713,10 @@ class MainWindow(QMainWindow):
         if stats.temp_readable and stats.gpu_temp is not None:
             extra = " · paused" if stats.paused_thermal else ""
             self.lbl_temp.setText(f"{stats.gpu_temp}°C{extra}")
-            if not self.chk_allow_no_temp.isChecked():
+            if not self._allow_mine_without_temp():
                 self._refresh_thermal_unsafe_banner(running_without_temp=False)
         else:
-            if self.controller.allow_mine_without_temp or self.chk_allow_no_temp.isChecked():
+            if self.controller.allow_mine_without_temp or self._allow_mine_without_temp():
                 self.lbl_temp.setText("unreadable · thermal protection OFF (unsafe)")
                 self._refresh_thermal_unsafe_banner(running_without_temp=True)
             else:
@@ -1414,6 +1737,17 @@ class MainWindow(QMainWindow):
         else:
             self.lbl_work.setText("no kernel yet (connected ≠ hashing)")
         self.lbl_status.setText(stats.status)
+        st = (stats.status or "").lower()
+        if (
+            not self._defender_help_shown
+            and ("windows security" in st or "coinminer" in st)
+            and "blocked" in st
+        ):
+            self._defender_help_shown = True
+            from ui.defender_help_dialog import show_defender_help
+
+            label = "XMRig" if self._network_id == "xmr" else "Rigel"
+            QTimer.singleShot(0, lambda: show_defender_help(self, label))
 
         # Block candidate panel
         self.lbl_blk_count.setText(str(stats.block_candidate_count))
@@ -1510,8 +1844,17 @@ class MainWindow(QMainWindow):
         act_hide.triggered.connect(self.hide)
         act_quit = QAction("Quit", self)
         act_quit.triggered.connect(self._quit_app)
+        act_how = QAction("How to Use…", self)
+        act_how.triggered.connect(self._show_howto)
+        act_fb = QAction("Feedback / Suggestions…", self)
+        act_fb.triggered.connect(self._show_feedback)
+        act_upd = QAction("Check for Updates…", self)
+        act_upd.triggered.connect(lambda: self._check_for_updates(manual=True))
         menu.addAction(act_show)
         menu.addAction(act_hide)
+        menu.addAction(act_how)
+        menu.addAction(act_fb)
+        menu.addAction(act_upd)
         menu.addSeparator()
         menu.addAction(act_quit)
         self.tray.setContextMenu(menu)
@@ -1597,33 +1940,47 @@ class MainWindow(QMainWindow):
             QSystemTrayIcon.MessageIcon.Critical,
         )
 
+    def _force_stop_all_miners(self) -> None:
+        """Best-effort: controller stop leftovers + kill AppData XMRig/Rigel."""
+        try:
+            from engines.orphan_miners import kill_app_miners
+
+            kill_app_miners()
+        except Exception:
+            pass
+
     def _quit_app(self) -> None:
         self._persist_form()
         if self._stop_busy:
             return
 
         def _after(ok: bool) -> None:
+            self._force_stop_all_miners()
             if not ok:
-                QMessageBox.warning(
-                    self,
-                    "Could not stop",
-                    "External miner / thread did not exit. Quit canceled — try Stop again.",
-                )
-                self._pending_quit = False
-                self._tray_exit = False
-                self.stop_btn.setEnabled(True)
-                return
+                # Still force-kill orphans; if something remains, warn but exit UI
+                try:
+                    from engines.orphan_miners import list_app_miners
+
+                    left = list_app_miners()
+                except Exception:
+                    left = []
+                if left:
+                    QMessageBox.warning(
+                        self,
+                        "Could not stop cleanly",
+                        "Some miner processes may still be running. "
+                        "They were signalled to terminate; check Task Manager if needed.",
+                    )
             self._tray_exit = True
             if self.tray is not None:
                 self.tray.hide()
             QApplication.instance().quit()
 
         self._pending_quit = True
-        # orphan xmrig may remain even if UI says stopped
         try:
-            from engines.orphan_miners import list_app_xmrig
+            from engines.orphan_miners import list_app_miners
 
-            orphans = list_app_xmrig()
+            orphans = list_app_miners()
         except Exception:
             orphans = []
         if (
@@ -1649,9 +2006,9 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             try:
-                from engines.orphan_miners import list_app_xmrig
+                from engines.orphan_miners import list_app_miners
 
-                orphans = list_app_xmrig()
+                orphans = list_app_miners()
             except Exception:
                 orphans = []
             if (
@@ -1662,15 +2019,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
 
                 def _after(ok: bool) -> None:
-                    if not ok:
-                        QMessageBox.warning(
-                            self,
-                            "Could not stop",
-                            "External miner / thread did not exit. Window close ignored.",
-                        )
-                        self._tray_exit = False
-                        self.stop_btn.setEnabled(True)
-                        return
+                    self._force_stop_all_miners()
                     self._tray_exit = True
                     if self.tray is not None:
                         self.tray.hide()
@@ -1678,6 +2027,7 @@ class MainWindow(QMainWindow):
 
                 self._begin_async_stop(_after)
                 return
+            self._force_stop_all_miners()
             if self.tray is not None:
                 self.tray.hide()
             event.accept()

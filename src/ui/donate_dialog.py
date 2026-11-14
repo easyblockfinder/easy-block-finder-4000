@@ -21,8 +21,8 @@ from app_meta import APP_NAME, load_app_icon, load_app_logo_pixmap
 from donate_addresses import DONATE_OPTIONS, DonateOption, get_donate_option
 
 
-def qr_pixmap(payload: str, *, modules: int = 7) -> QPixmap:
-    """Build QR matrix → QPixmap (no Pillow required)."""
+def qr_pixmap(payload: str, *, display_px: int = 240) -> QPixmap:
+    """Build QR matrix → QPixmap scaled to a fixed square (fully visible)."""
     import qrcode
 
     qr = qrcode.QRCode(version=None, box_size=1, border=2)
@@ -30,7 +30,8 @@ def qr_pixmap(payload: str, *, modules: int = 7) -> QPixmap:
     qr.make(fit=True)
     matrix = qr.get_matrix()
     n = len(matrix)
-    scale = max(4, int(modules))
+    # Pick integer module size so the bitmap is >= display_px, then smooth-scale down
+    scale = max(3, (int(display_px) + n - 1) // n)
     img = QImage(n * scale, n * scale, QImage.Format.Format_RGB32)
     img.fill(QColor("#ffffff"))
     dark = QColor("#0b3d2e")
@@ -41,7 +42,14 @@ def qr_pixmap(payload: str, *, modules: int = 7) -> QPixmap:
             for dy in range(scale):
                 for dx in range(scale):
                     img.setPixelColor(x * scale + dx, y * scale + dy, dark)
-    return QPixmap.fromImage(img)
+    pix = QPixmap.fromImage(img)
+    side = max(160, int(display_px))
+    return pix.scaled(
+        side,
+        side,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
 
 
 class DonateDialog(QDialog):
@@ -51,16 +59,18 @@ class DonateDialog(QDialog):
         icon = load_app_icon()
         if not icon.isNull():
             self.setWindowIcon(icon)
-        self.setMinimumWidth(480)
-        self.setMinimumHeight(520)
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(640)
+        self.resize(520, 680)
         self._opt: DonateOption | None = None
+        self._qr_side = 240
 
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 18)
-        root.setSpacing(12)
+        root.setSpacing(10)
 
         head_logo = QLabel()
-        head_pix = load_app_logo_pixmap(360, 72)
+        head_pix = load_app_logo_pixmap(320, 56)
         if not head_pix.isNull():
             head_logo.setPixmap(head_pix)
             head_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -102,7 +112,7 @@ class DonateDialog(QDialog):
         l1.setSpacing(10)
         self.lbl_thanks = QLabel("Thank you")
         self.lbl_thanks.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_thanks.setFont(QFont("Bahnschrift", 22, QFont.Weight.Bold))
+        self.lbl_thanks.setFont(QFont("Bahnschrift", 18, QFont.Weight.Bold))
         self.lbl_thanks.setStyleSheet("color: #0b3d2e;")
         l1.addWidget(self.lbl_thanks)
         self.lbl_thanks_sub = QLabel(
@@ -121,8 +131,13 @@ class DonateDialog(QDialog):
 
         self.lbl_qr = QLabel()
         self.lbl_qr.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_qr.setMinimumHeight(220)
-        l1.addWidget(self.lbl_qr)
+        self.lbl_qr.setFixedSize(self._qr_side + 16, self._qr_side + 16)
+        self.lbl_qr.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.lbl_qr.setStyleSheet(
+            "QLabel { background: #ffffff; border: 1px solid #c5d0cb; "
+            "border-radius: 8px; padding: 6px; }"
+        )
+        l1.addWidget(self.lbl_qr, 0, Qt.AlignmentFlag.AlignHCenter)
 
         addr_row = QHBoxLayout()
         addr_row.setSpacing(8)
@@ -173,9 +188,12 @@ class DonateDialog(QDialog):
         self.lbl_note.setText(opt.network_note)
         self.lbl_addr.setPlainText(opt.address)
         try:
-            self.lbl_qr.setPixmap(qr_pixmap(opt.qr_payload, modules=8))
+            pix = qr_pixmap(opt.qr_payload, display_px=self._qr_side)
+            self.lbl_qr.setPixmap(pix)
+            self.lbl_qr.setToolTip("")
         except Exception as exc:
-            self.lbl_qr.setText(f"Could not build QR: {exc}")
+            self.lbl_qr.clear()
+            self.lbl_qr.setText(f"Could not build QR:\n{exc}")
         self.stack.setCurrentIndex(1)
 
     def _copy_addr(self) -> None:

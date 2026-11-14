@@ -11,9 +11,12 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 log = logging.getLogger(__name__)
+
+# phase, received_bytes, total_bytes|None, detail message
+ProgressCb = Callable[[str, int, Optional[int], str], None]
 
 _LOCK_PATH = Path(__file__).resolve().parents[2] / "third_party" / "miners.lock.json"
 
@@ -133,12 +136,21 @@ def ensure_miner(
     *,
     reverify: bool = True,
     require_consent: bool = True,
+    progress: ProgressCb | None = None,
 ) -> Path:
     """
     Atomic install from a ZIP whose SHA matches the lock file.
     Downloaded bytes are not reshaped to match the lock hash.
     New downloads require miner_download_consent in settings (unless require_consent=False).
+    progress(phase, received, total, detail) is optional UI feedback.
     """
+    def _prog(phase: str, received: int = 0, total: Optional[int] = None, detail: str = "") -> None:
+        if progress is not None:
+            try:
+                progress(phase, received, total, detail)
+            except Exception:
+                log.debug("progress callback failed", exc_info=True)
+
     lock = load_lock()
     entry = lock.get(miner_id)
     if not isinstance(entry, dict):
@@ -161,6 +173,7 @@ def ensure_miner(
 
     need_download = True
     if zip_path.is_file():
+        _prog("check", 0, None, f"Checking existing {asset}…")
         got = _sha256_file(zip_path).lower()
         if got == expect:
             need_download = False
@@ -174,19 +187,31 @@ def ensure_miner(
             if not load_consent_from_settings():
                 raise RuntimeError(
                     f"Download of {miner_id} blocked: user consent required. "
-                    "Enable miner download consent in Settings, or accept the consent dialog."
+                    "Accept the miner download consent dialog, then try again."
                 )
         from app_meta import APP_USER_AGENT
 
         log.info("Downloading miner from official URL: %s", url)
+        _prog("download", 0, None, f"Connecting to official release…\n{url}")
         tmp_zip = zip_path.with_suffix(".part")
         req = urllib.request.Request(url, headers={"User-Agent": APP_USER_AGENT})
-        with urllib.request.urlopen(req, timeout=120) as resp, tmp_zip.open("wb") as out:
-            while True:
-                chunk = resp.read(1024 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp, tmp_zip.open("wb") as out:
+                total_hdr = resp.headers.get("Content-Length")
+                total_n = int(total_hdr) if total_hdr and str(total_hdr).isdigit() else None
+                received = 0
+                _prog("download", 0, total_n, f"Downloading {asset}…")
+                while True:
+                    chunk = resp.read(256 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    received += len(chunk)
+                    _prog("download", received, total_n, f"Downloading {asset}…")
+        except Exception:
+            tmp_zip.unlink(missing_ok=True)
+            raise
+        _prog("verify", 0, None, "Verifying SHA-256 checksum…")
         got = _sha256_file(tmp_zip).lower()
         if got != expect:
             tmp_zip.unlink(missing_ok=True)
@@ -201,6 +226,7 @@ def ensure_miner(
         except Exception:
             log.debug("zip MOTW cleanup skipped", exc_info=True)
 
+    _prog("verify", 0, None, f"Verifying {asset}…")
     got = _sha256_file(zip_path).lower()
     if got != expect:
         zip_path.unlink(missing_ok=True)
@@ -227,15 +253,18 @@ def ensure_miner(
                     clear_zone_identifier(exe_path)
                 except Exception:
                     pass
+                _prog("done", 1, 1, f"{exe_name} ready")
                 return exe_path.resolve()
             except RuntimeError:
                 log.warning("Installed EXE is corrupted — re-extracting: %s", exe_path)
                 shutil.rmtree(install_dir, ignore_errors=True)
 
         if not reverify and exe_path.is_file() and (marker.is_file() or legacy_marker.is_file()):
+            _prog("done", 1, 1, f"{exe_name} ready")
             return exe_path.resolve()
 
         # Atomic: move to temp → verify → replace
+        _prog("extract", 0, None, f"Extracting {exe_name}…")
         with tempfile.TemporaryDirectory(dir=str(base_dir)) as tmp:
             tmp_root = Path(tmp)
             out_exe = _safe_extract_member(zf, member, tmp_root)
@@ -252,4 +281,5 @@ def ensure_miner(
             except Exception:
                 log.debug("exe MOTW cleanup skipped", exc_info=True)
             marker.write_text(expect, encoding="utf-8")
+            _prog("done", 1, 1, f"{exe_name} installed")
             return final.resolve()

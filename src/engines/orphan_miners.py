@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from app_meta import XMRIG_HTTP_PORT, XMRIG_ORPHAN_TOKENS
@@ -119,6 +120,79 @@ def kill_app_xmrig(*, exclude_pid: Optional[int] = None) -> tuple[int, list[int]
     if killed:
         log.warning("Orphaned XMRig terminated: pids=%s", pids)
     return killed, failed
+
+
+def _appdata_miners_marker() -> str:
+    from app_meta import APP_DATA_DIRNAME
+
+    base = os.environ.get("LOCALAPPDATA") or ""
+    return (Path(base) / APP_DATA_DIRNAME / "miners").as_posix().lower()
+
+
+def list_app_rigel() -> list[OrphanHit]:
+    """Rigel launched from this app's AppData miners folder (or known API bind)."""
+    if sys.platform != "win32":
+        return []
+    marker = _appdata_miners_marker()
+    ps = (
+        "Get-CimInstance Win32_Process -Filter \"Name = 'rigel.exe'\" | "
+        "Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress"
+    )
+    try:
+        raw = subprocess.check_output(
+            ["powershell", "-NoProfile", "-Command", ps],
+            text=True,
+            timeout=15,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        log.exception("orphan rigel list")
+        return []
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, dict):
+        data = [data]
+    hits: list[OrphanHit] = []
+    for row in data or []:
+        cmd = str(row.get("CommandLine") or "")
+        cmd_l = cmd.replace("\\", "/").lower()
+        if not cmd or not marker or marker not in cmd_l:
+            continue
+        try:
+            pid = int(row.get("ProcessId"))
+        except (TypeError, ValueError):
+            continue
+        hits.append(
+            OrphanHit(pid=pid, name=str(row.get("Name") or ""), cmdline=cmd[:240])
+        )
+    return hits
+
+
+def kill_app_rigel(*, exclude_pid: Optional[int] = None) -> tuple[int, list[int]]:
+    hits = list_app_rigel()
+    pids = [h.pid for h in hits if exclude_pid is None or h.pid != exclude_pid]
+    if not pids:
+        return 0, []
+    failed = kill_pids(pids)
+    killed = max(0, len(pids) - len(failed))
+    if killed:
+        log.warning("Orphaned Rigel terminated: pids=%s", pids)
+    return killed, failed
+
+
+def list_app_miners() -> list[OrphanHit]:
+    return list_app_xmrig() + list_app_rigel()
+
+
+def kill_app_miners(*, exclude_pid: Optional[int] = None) -> tuple[int, list[int]]:
+    """Stop all EBF4000-managed external miners (XMRig + Rigel)."""
+    n1, f1 = kill_app_xmrig(exclude_pid=exclude_pid)
+    n2, f2 = kill_app_rigel(exclude_pid=exclude_pid)
+    return n1 + n2, f1 + f2
 
 
 # Retrospective alias

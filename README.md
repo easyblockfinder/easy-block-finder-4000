@@ -21,6 +21,12 @@ It is not a simulation. **No earnings or hashrate are guaranteed.**
 - Thermal guard (Start blocked if temperature is unreadable, unless you opt in)
 - Single-instance UI + system tray
 - External miners are **not** in the zip; download only after consent, SHA-256 pinned
+- Optional GitHub auto-update (signed ZIP; **Help → Check for Updates…**)
+
+## How to use
+
+In the app: **Help → How to Use…** (temperature limits, addresses, intensity, Start/Stop).  
+Feedback: **Help → Feedback / Suggestions…** (`sametkuzu82@gmail.com`).
 
 ## Setup (Windows)
 
@@ -53,17 +59,24 @@ Support depends on installed drivers and free VRAM (RVN/ERG). Without a usable G
 
 EBF4000 does **not** ship miner binaries.
 
-When you **Start** XMR, RVN, or ERG, the app asks for consent, then downloads **only** that network’s official engine into AppData and verifies SHA-256 from `third_party/miners.lock.json`. Miners never run until you press Start. Consent can be changed in Settings. Windows Defender is never disabled by this app.
+When you **Start** XMR, RVN, or ERG (or on first launch if engines are missing), the app asks for consent, then downloads **only** the selected official engine into AppData and verifies SHA-256 from `third_party/miners.lock.json`. Miners never run until you press Start. Windows Defender is never disabled by this app.
 
 Upstream engines have their own licenses and developer fees — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+### Windows Security (do not disable Defender)
+
+XMRig/Rigel may be flagged as CoinMiner (false positive). Keep Defender on. Exclude only  
+`%LOCALAPPDATA%\EasyBlockFinder4000\miners`, restore the file from Protection history, then Start again.  
+The app can open Windows Security or run `scripts\add_defender_exclusion.ps1` (UAC).
+
 ## Important Disclaimer
 
-Easy Block Finder 4000 is experimental software.
+Full text: **[DISCLAIMER.md](DISCLAIMER.md)**. Easy Block Finder 4000 is experimental software.
 
 - **Rewards:** Solo mining is probability-based; consumer hardware may never find a block.
 - **Antivirus:** Mining tools are often flagged. Do **not** treat every alert as a false positive; verify the source and code before allowing exceptions.
 - **Hardware / power:** Sustained CPU/GPU load and electricity use are your responsibility; monitor temperatures.
+- **Temperature unreadable:** If the app cannot read CPU/GPU temperature, the automatic thermal guard **does not run**. Mining in that state can overheat or damage hardware. Start is blocked unless you explicitly accept the on-screen liability notice. Authors are **not liable** for damage, data loss, or other consequences of continuing without a temp guard. See [DISCLAIMER.md](DISCLAIMER.md).
 - **Authorization:** Use only on hardware you own or are explicitly allowed to operate.
 
 ## Download
@@ -73,6 +86,7 @@ Source lives in this repository. Installable packages (when published) are under
 ## License & trademarks
 
 - Code: [Apache License 2.0](LICENSE)
+- Disclaimer: [DISCLAIMER.md](DISCLAIMER.md)
 - Name / logo / brand: reserved — see [TRADEMARKS.md](TRADEMARKS.md)
 - Security notes: [SECURITY.md](SECURITY.md)
 - Donations: [DONATE.md](DONATE.md)

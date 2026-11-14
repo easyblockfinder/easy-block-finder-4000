@@ -77,6 +77,24 @@ def is_miner_installed(miner_id: str) -> bool:
     return exe.is_file() and (marker.is_file() or legacy.is_file())
 
 
+def list_catalog_miner_ids() -> list[str]:
+    """Stable order: xmrig, then rigel, then any other lock keys."""
+    lock = load_lock()
+    preferred = ("xmrig", "rigel")
+    out: list[str] = []
+    for mid in preferred:
+        if mid in lock and isinstance(lock[mid], dict):
+            out.append(mid)
+    for mid, entry in lock.items():
+        if mid not in out and isinstance(entry, dict):
+            out.append(str(mid))
+    return out
+
+
+def list_missing_miners() -> list[str]:
+    return [mid for mid in list_catalog_miner_ids() if not is_miner_installed(mid)]
+
+
 def consent_body_for_miners(miner_ids: list[str]) -> str:
     """Human-readable consent text for the dialog."""
     lines: list[str] = [
