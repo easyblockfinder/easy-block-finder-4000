@@ -40,6 +40,9 @@ project.md
 _local_backup/
 *.local.md
 
+# Marketing site — hosted separately, not on GitHub
+website/
+
 # Downloaded miners / large binaries (never ship)
 **/miners/
 *.exe
