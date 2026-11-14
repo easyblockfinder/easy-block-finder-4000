@@ -966,7 +966,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(
                         self,
                         "Updates",
-                        "You are on the latest release (or no newer stable ZIP is published).",
+                        "Your application is already up to date.",
                     )
                 return
             # "Later" only suppresses until the next app launch (every_launch asks again)
