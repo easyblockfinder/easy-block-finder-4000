@@ -72,8 +72,14 @@ class _IdlePrepWorker(QThread):
         self.finished_ok.emit()
 
 APP_QSS = """
+QWidget {
+    color: #15202b;
+}
 QMainWindow, QScrollArea, QWidget#root {
     background: #eef1f4;
+    color: #15202b;
+}
+QLabel {
     color: #15202b;
 }
 QLabel#brand {
@@ -96,15 +102,20 @@ QFrame#panel {
     border: 1px solid #d5dde5;
     border-radius: 10px;
 }
-QLineEdit, QSpinBox, QTextEdit {
+QLineEdit, QSpinBox, QTextEdit, QPlainTextEdit {
     background: #ffffff;
+    color: #15202b;
     border: 1px solid #c8d2dc;
     border-radius: 8px;
     padding: 8px 10px;
     selection-background-color: #0d9488;
+    selection-color: #ffffff;
     font-size: 13px;
 }
-QLineEdit:focus, QSpinBox:focus, QTextEdit:focus {
+QLineEdit::placeholder, QTextEdit::placeholder, QPlainTextEdit::placeholder {
+    color: #94a3b8;
+}
+QLineEdit:focus, QSpinBox:focus, QTextEdit:focus, QPlainTextEdit:focus {
     border: 1px solid #0d9488;
 }
 QLineEdit:disabled, QSpinBox:disabled {
@@ -187,7 +198,8 @@ QFrame#blockDetail, QFrame#shareDetail {
     border: 1px solid #d5dde5;
     border-radius: 8px;
 }
-QCheckBox {
+QCheckBox, QRadioButton {
+    color: #15202b;
     spacing: 8px;
     font-size: 12px;
 }
@@ -196,9 +208,20 @@ QCheckBox::indicator {
     height: 16px;
     border-radius: 4px;
     border: 1px solid #c8d2dc;
-    background: #fff;
+    background: #ffffff;
 }
 QCheckBox::indicator:checked {
+    background: #0d9488;
+    border-color: #0d9488;
+}
+QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 7px;
+    border: 1px solid #c8d2dc;
+    background: #ffffff;
+}
+QRadioButton::indicator:checked {
     background: #0d9488;
     border-color: #0d9488;
 }
@@ -462,7 +485,7 @@ class MainWindow(QMainWindow):
         s_layout.addWidget(self.lbl_thermal_unsafe)
         self._refresh_thermal_unsafe_banner()
 
-        self.lbl_engine_fee = QLabel("Motor fee share: 0")
+        self.lbl_engine_fee = QLabel("Engine fee share: 0")
         self.lbl_engine_fee.setObjectName("statKey")
         s_layout.addWidget(self.lbl_engine_fee)
         self.lbl_unattributed = QLabel("Unattributed shares: 0")
