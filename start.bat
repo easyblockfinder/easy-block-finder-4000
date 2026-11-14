@@ -3,9 +3,9 @@ setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
 cd /d "%~dp0"
 
-title Easy Block Finder 4000 — EBF4000 - v1.0
+title Easy Block Finder 4000 — EBF4000
 echo ============================================
-echo   Easy Block Finder 4000  ^(EBF4000 - v1.0^)
+echo   Easy Block Finder 4000  ^(EBF4000^)
 echo   First-run setup — Windows
 echo ============================================
 echo.
@@ -33,32 +33,31 @@ if /i "%PY_ARCH%"=="win32" (
   set "URL_PYTHON_312=https://www.python.org/ftp/python/3.12.10/python-3.12.10-%PY_ARCH%.exe"
 )
 
-REM --- Pick a Python ^(prefer 3.12; not free-threaded 3.13t^) ---
-set "PYTHON="
 set "PICKER=%~dp0scripts\pick_python.py"
+set "PATH_FIX_PS1=%~dp0scripts\add_python_user_path.ps1"
+set "PYTHON="
+set "PYTHON_FROM_PATH=0"
 
-where python >nul 2>&1
-if not errorlevel 1 (
-  for /f "delims=" %%I in ('python "%PICKER%" 2^>nul') do set "PYTHON=%%I"
-)
-
+call :discover_python
 if not defined PYTHON (
-  where py >nul 2>&1
-  if not errorlevel 1 (
-    for /f "delims=" %%I in ('py -3 "%PICKER%" 2^>nul') do set "PYTHON=%%I"
-  )
+  echo [!] Python not found on PATH or in common install folders.
+  echo.
+  call :offer_python_auto_install
+  call :discover_python
 )
-
-if not defined PYTHON (
-  where python >nul 2>&1
-  if not errorlevel 1 (
-    for /f "delims=" %%I in ('python -c "import sys; print(sys.executable)" 2^>nul') do set "PYTHON=%%I"
-  )
-)
-
 if not defined PYTHON (
   call :guide_python_missing
+  call :discover_python
+)
+if not defined PYTHON (
+  echo [ERROR] Still no usable Python. Close this window and try again after installing.
+  pause
   exit /b 1
+)
+
+REM Prefer pick_python ranking when we have a working interpreter
+if exist "%PICKER%" (
+  for /f "delims=" %%I in ('"%PYTHON%" "%PICKER%" 2^>nul') do set "PYTHON=%%I"
 )
 
 echo %PYTHON% | findstr /i "python3.13t t.exe" >nul
@@ -70,11 +69,13 @@ if not errorlevel 1 (
   exit /b 1
 )
 
+call :ensure_python_on_path
+
 echo Using Python:
 "%PYTHON%" -c "import sys; print(' ', sys.executable); print('  Version:', sys.version.split()[0])"
 if errorlevel 1 (
   echo [ERROR] Could not run: %PYTHON%
-  call :guide_python_install "Reinstall Python 3.12 and tick 'Add python.exe to PATH'."
+  call :guide_python_install "Reinstall Python 3.12 ^(PATH is added automatically if you use start.bat auto-install^)."
   exit /b 1
 )
 
@@ -96,7 +97,7 @@ if errorlevel 1 (
     echo.
     echo Fix:
     echo   1. Reinstall Python 3.12 from the official installer
-    echo   2. Enable "pip" / "Add python.exe to PATH"
+    echo   2. Or run start.bat again and choose auto-install ^(adds PATH for you^)
     echo   3. Or see: %URL_PIP%
     echo.
     choice /C YN /M "Open pip installation help in your browser"
@@ -167,6 +168,151 @@ endlocal
 exit 0
 
 
+REM ========== Python discovery / PATH / install ==========
+
+:discover_python
+set "PYTHON="
+set "PYTHON_FROM_PATH=0"
+
+REM 1) Already on PATH
+where python >nul 2>&1
+if not errorlevel 1 (
+  for /f "delims=" %%I in ('where python 2^>nul') do (
+    if not defined PYTHON (
+      echo %%I | findstr /i "WindowsApps\\python.exe WindowsApps\\Python.exe" >nul
+      if errorlevel 1 (
+        set "PYTHON=%%I"
+        set "PYTHON_FROM_PATH=1"
+      )
+    )
+  )
+)
+
+REM 2) py launcher ^(works even when python.exe is not on PATH^)
+if not defined PYTHON (
+  where py >nul 2>&1
+  if not errorlevel 1 (
+    for /f "delims=" %%I in ('py -3.12 -c "import sys; print(sys.executable)" 2^>nul') do set "PYTHON=%%I"
+    if not defined PYTHON (
+      for /f "delims=" %%I in ('py -3 -c "import sys; print(sys.executable)" 2^>nul') do set "PYTHON=%%I"
+    )
+  )
+)
+
+REM 3) Common install folders — even if "Add to PATH" was unticked
+if not defined PYTHON if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+if not defined PYTHON if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+if not defined PYTHON if exist "%LOCALAPPDATA%\Programs\Python\Python310\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+if not defined PYTHON if exist "%LOCALAPPDATA%\Programs\Python\Python313\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
+if not defined PYTHON if exist "%ProgramFiles%\Python312\python.exe" set "PYTHON=%ProgramFiles%\Python312\python.exe"
+if not defined PYTHON if exist "%ProgramFiles%\Python311\python.exe" set "PYTHON=%ProgramFiles%\Python311\python.exe"
+if not defined PYTHON if exist "C:\Python312\python.exe" set "PYTHON=C:\Python312\python.exe"
+if not defined PYTHON if exist "C:\Python311\python.exe" set "PYTHON=C:\Python311\python.exe"
+if not defined PYTHON if exist "C:\Python310\python.exe" set "PYTHON=C:\Python310\python.exe"
+
+if defined PYTHON (
+  if not exist "%PYTHON%" set "PYTHON="
+)
+exit /b 0
+
+
+:ensure_python_on_path
+REM Make this session + optionally permanent User PATH see python.exe
+for %%I in ("%PYTHON%") do set "PY_DIR=%%~dpI"
+set "PY_DIR=%PY_DIR:~0,-1%"
+
+where python >nul 2>&1
+if not errorlevel 1 (
+  for /f "delims=" %%I in ('where python 2^>nul') do (
+    if /i "%%~fI"=="%PYTHON%" (
+      echo Python is on PATH for this session.
+      exit /b 0
+    )
+  )
+)
+
+echo.
+echo [!] Python was found, but it is NOT on PATH:
+echo     %PYTHON%
+echo     ^(Installer checkbox "Add python.exe to PATH" was probably skipped.^)
+echo.
+REM Fix this CMD session immediately
+set "PATH=%PY_DIR%;%PY_DIR%\Scripts;%PATH%"
+echo [OK] Added to PATH for THIS window so setup can continue.
+echo.
+
+if exist "%PATH_FIX_PS1%" (
+  choice /C YN /M "Also add Python to your user PATH permanently so future windows find it"
+  if not errorlevel 2 (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%PATH_FIX_PS1%" -PythonExe "%PYTHON%"
+    if errorlevel 1 (
+      echo [!] Could not update user PATH automatically. This start.bat window will still work.
+    ) else (
+      echo [OK] User PATH updated. New terminals will find python without re-checking.
+    )
+  ) else (
+    echo Skipped permanent PATH fix. You can re-run start.bat later to add it.
+  )
+)
+echo.
+exit /b 0
+
+
+:offer_python_auto_install
+echo Easy Block Finder 4000 needs Python 3.10–3.12 ^(%PY_ARCH_LABEL% recommended^).
+echo.
+echo You can let start.bat download and install official Python 3.12
+echo WITH PATH enabled automatically ^(no need to tick the checkbox^).
+echo.
+choice /C YN /M "Download and install Python 3.12 now with PATH enabled"
+if errorlevel 2 (
+  echo.
+  echo Skipping auto-install.
+  exit /b 1
+)
+
+set "PY_SETUP=%TEMP%\EBF4000-python-3.12.10-setup.exe"
+echo.
+echo Downloading:
+echo   %URL_PYTHON_312%
+echo.
+
+where curl >nul 2>&1
+if not errorlevel 1 (
+  curl -L --retry 3 --retry-delay 2 -o "%PY_SETUP%" "%URL_PYTHON_312%"
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%URL_PYTHON_312%' -OutFile '%PY_SETUP%'"
+)
+if not exist "%PY_SETUP%" (
+  echo [ERROR] Download failed.
+  exit /b 1
+)
+
+echo.
+echo Installing Python 3.12 ^(per-user, PrependPath=1, Include launcher + pip^)...
+echo Please wait — a progress window may appear.
+echo.
+"%PY_SETUP%" /passive InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_pip=1 Include_test=0 SimpleInstall=1
+set "INST_ERR=!ERRORLEVEL!"
+echo Installer exit code: !INST_ERR!
+echo.
+
+REM Refresh PATH from registry for this session
+for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%A"
+
+call :discover_python
+if defined PYTHON (
+  echo [OK] Python installed and detected:
+  echo     %PYTHON%
+  call :ensure_python_on_path
+  exit /b 0
+)
+
+echo [!] Install finished but Python still not detected in this window.
+echo     Close this CMD, open a NEW one, and run start.bat again.
+exit /b 1
+
+
 REM ========== Guides ==========
 
 :guide_python_missing
@@ -174,21 +320,25 @@ echo [ERROR] No suitable Python found on this PC.
 echo.
 echo Easy Block Finder 4000 needs Python 3.10–3.12.
 echo Recommended: Python 3.12 %PY_ARCH_LABEL% for this PC.
-echo Auto-install is not available from this script.
 echo.
-echo Do this:
-echo   1. Download the installer matched to this PC ^(link below^)
-echo   2. *** IMPORTANT *** On the FIRST installer screen, tick:
-echo        [x] Add python.exe to PATH
-echo      ^(Without this, start.bat will not find Python after install.^)
-echo   3. Close this window, open a NEW terminal, run start.bat again
+echo Easiest fix: run start.bat again and choose YES when asked to
+echo auto-install Python 3.12 — PATH is enabled for you ^(PrependPath=1^).
+echo.
+echo Manual install:
+echo   1. Download: %URL_PYTHON_312%
+echo   2. On the FIRST screen tick [x] Add python.exe to PATH
+echo      OR just re-run start.bat auto-install so you do not need that checkbox.
+echo   3. Open a NEW terminal and run start.bat again
 echo.
 echo Avoid: Python 3.13t / free-threaded builds ^(PyQt6 wheels missing^).
 echo.
-echo Download page:     %URL_PYTHON_PAGE%
-echo Direct 3.12 %PY_ARCH%: %URL_PYTHON_312%
-echo.
-choice /C YN /M "Open Python 3.12 download for this PC now"
+choice /C YN /M "Try auto-install Python 3.12 with PATH now"
+if not errorlevel 2 (
+  call :offer_python_auto_install
+  call :discover_python
+  if defined PYTHON exit /b 0
+)
+choice /C YN /M "Open Python download page in browser instead"
 if not errorlevel 2 (
   start "" "%URL_PYTHON_PAGE%"
   start "" "%URL_PYTHON_312%"
@@ -200,12 +350,15 @@ exit /b 0
 :guide_python_install
 if not "%~1"=="" echo %~1
 echo.
-echo Download page:     %URL_PYTHON_PAGE%
-echo Direct 3.12 %PY_ARCH%: %URL_PYTHON_312%
+echo Recommended: run start.bat and accept auto-install ^(PATH is set for you^).
+echo Or download: %URL_PYTHON_312%
+echo If installing manually, tick "Add python.exe to PATH" on the first screen.
 echo.
-echo *** IMPORTANT *** Reinstall and tick "Add python.exe to PATH"
-echo on the first installer screen, then reopen start.bat in a NEW window.
-echo.
+choice /C YN /M "Auto-install Python 3.12 with PATH now"
+if not errorlevel 2 (
+  call :offer_python_auto_install
+  exit /b 0
+)
 choice /C YN /M "Open Python download for this PC now"
 if not errorlevel 2 (
   start "" "%URL_PYTHON_PAGE%"
@@ -221,7 +374,7 @@ echo What to try next:
 echo.
 echo  1^) Python / pip packages
 echo     "%PYTHON%" -m pip install -r "%~dp0requirements.txt"
-echo     If that fails, reinstall Python 3.12 with PATH enabled:
+echo     Or re-run start.bat and use Python auto-install ^(PATH included^):
 echo     %URL_PYTHON_312%
 echo.
 echo  2^) NVIDIA GPU networks ^(BTC/BCH/RVN/ERG^)
