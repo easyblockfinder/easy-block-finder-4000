@@ -116,33 +116,67 @@ def check_python() -> tuple[bool, str]:
         return False, str(exc)
 
 
+def _win_no_window_flags() -> int:
+    """DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW"""
+    return (
+        getattr(os, "DETACHED_PROCESS", 0x00000008)
+        | getattr(os, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        | 0x08000000  # CREATE_NO_WINDOW
+    )
+
+
+def _pythonw() -> str:
+    """Prefer pythonw.exe so post-update restart never leaves a console."""
+    exe = sys.executable
+    if sys.platform == "win32" and exe.lower().endswith("python.exe"):
+        candidate = exe[:-10] + "pythonw.exe"
+        if Path(candidate).is_file():
+            return candidate
+    return exe
+
+
 def restart_app(job: dict) -> None:
+    """
+    Relaunch the GUI without a visible cmd.exe / start.bat window.
+
+    start.bat is for first-run setup (echoes, ensure_deps). After a verified
+    update, deps were already refreshed — open main.py via pythonw silently.
+    """
     restart = job.get("restart") or {}
     bat = Path(str(restart.get("bat") or ""))
-    cwd = Path(str(restart.get("cwd") or bat.parent))
+    cwd = Path(str(restart.get("cwd") or (bat.parent if bat else ".")))
+    main_py = cwd / "src" / "main.py"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(cwd / "src")
+
+    if main_py.is_file():
+        kwargs: dict = {
+            "cwd": str(cwd),
+            "env": env,
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "close_fds": True,
+        }
+        if sys.platform == "win32":
+            kwargs["creationflags"] = _win_no_window_flags()
+        subprocess.Popen([_pythonw(), str(main_py)], **kwargs)
+        return
+
+    # Last resort: start.bat, still hidden on Windows
     if bat.is_file():
         if sys.platform == "win32":
             subprocess.Popen(
-                ["cmd.exe", "/c", "start", "", str(bat)],
+                ["cmd.exe", "/c", str(bat)],
                 cwd=str(cwd),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 close_fds=True,
-                creationflags=getattr(os, "DETACHED_PROCESS", 0) | getattr(
-                    os, "CREATE_NEW_PROCESS_GROUP", 0
-                ),
+                creationflags=_win_no_window_flags(),
             )
         else:
             subprocess.Popen([str(bat)], cwd=str(cwd))
-        return
-    # Fallback: python -m
-    main_py = cwd / "src" / "main.py"
-    if main_py.is_file():
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(cwd / "src")
-        subprocess.Popen(
-            [sys.executable.replace("pythonw.exe", "python.exe"), str(main_py)],
-            cwd=str(cwd),
-            env=env,
-        )
 
 
 def main() -> int:
@@ -199,13 +233,18 @@ def main() -> int:
     py_console = sys.executable.replace("pythonw.exe", "python.exe")
     if ensure.is_file():
         try:
-            subprocess.run(
-                [py_console, str(ensure), "--quiet"],
-                cwd=str(install_dir),
-                timeout=300,
-                check=False,
-                env={**os.environ, "PYTHONPATH": str(install_dir / "src")},
-            )
+            run_kw: dict = {
+                "cwd": str(install_dir),
+                "timeout": 300,
+                "check": False,
+                "env": {**os.environ, "PYTHONPATH": str(install_dir / "src")},
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+            }
+            if sys.platform == "win32":
+                run_kw["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+            subprocess.run([py_console, str(ensure), "--quiet"], **run_kw)
             _log("ensure_deps finished")
         except Exception as exc:
             _log(f"ensure_deps skipped: {exc}")

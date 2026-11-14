@@ -208,14 +208,16 @@ def prepare_update(
 def launch_external_updater(prepared: PreparedUpdate) -> None:
     """Start apply_update.py detached, then caller must exit the app."""
     root = install_root()
-    apply_script = root / "scripts" / "apply_update.py"
-    if not apply_script.is_file():
-        # Fallback: staged copy from payload (first-time self-update includes script)
-        staged = prepared.payload_dir / "scripts" / "apply_update.py"
-        if staged.is_file():
-            apply_script = staged
-        else:
-            raise UpdateError("scripts/apply_update.py not found")
+    # Prefer the NEW package's apply_update.py so restart/UI fixes ship on this update
+    # (not only on the next one). Fall back to the installed copy if needed.
+    staged = prepared.payload_dir / "scripts" / "apply_update.py"
+    installed = root / "scripts" / "apply_update.py"
+    if staged.is_file():
+        apply_script = staged
+    elif installed.is_file():
+        apply_script = installed
+    else:
+        raise UpdateError("scripts/apply_update.py not found")
 
     python = sys.executable
     # Prefer console-less on Windows when pythonw available
@@ -226,8 +228,10 @@ def launch_external_updater(prepared: PreparedUpdate) -> None:
 
     creationflags = 0
     if sys.platform == "win32":
-        creationflags = getattr(os, "DETACHED_PROCESS", 0x00000008) | getattr(
-            os, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+        creationflags = (
+            getattr(os, "DETACHED_PROCESS", 0x00000008)
+            | getattr(os, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | 0x08000000  # CREATE_NO_WINDOW
         )
 
     import subprocess
