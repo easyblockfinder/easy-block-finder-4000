@@ -1,0 +1,27 @@
+{
+  "xmrig": {
+    "version": "6.26.0",
+    "license": "GPL-3.0",
+    "donate_default_percent": 1,
+    "donate_note": "Upstream XMRig donate level; not added to your accepted share count",
+    "asset": "xmrig-6.26.0-windows-x64.zip",
+    "url": "https://github.com/xmrig/xmrig/releases/download/v6.26.0/xmrig-6.26.0-windows-x64.zip",
+    "sha256": "bba8097cb37d9b458a1cb1137876b27cde6740d17fe4ccbc086ba07d87d9e147",
+    "exe_relpath": "xmrig.exe",
+    "algorithms": ["randomx"],
+    "networks": ["xmr"]
+  },
+  "rigel": {
+    "version": "1.23.2",
+    "license": "proprietary (free to use)",
+    "donate_default_percent": 1,
+    "donate_note": "Built-in Rigel developer fee (not removable); SHA-256 re-verified on install",
+    "asset": "rigel-1.23.2-win.zip",
+    "url": "https://github.com/rigelminer/rigel/releases/download/1.23.2/rigel-1.23.2-win.zip",
+    "sha256": "0a35d37504e2595f2cd9bb25ae69eae39625be6f0ebbdbaf7427d4c381a7fd79",
+    "sha256_status": "re-verified at RVN integration 2026-11-13",
+    "exe_relpath": "rigel.exe",
+    "algorithms": ["kawpow", "autolykos2"],
+    "networks": ["rvn", "erg"]
+  }
+}

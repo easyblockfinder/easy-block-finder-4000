@@ -1,0 +1,20 @@
+{
+  "version": "6.26.0",
+  "connection": {
+    "pool": "xmr.kryptex.network:7029",
+    "uptime": 120,
+    "ping": 40,
+    "diff": 100001
+  },
+  "results": {
+    "shares_good": 5,
+    "shares_total": 5,
+    "avg_time": 12,
+    "hashes_total": 1000000,
+    "diff_current": 100001
+  },
+  "hashrate": {
+    "total": [1500.0, 1400.0, 0.0],
+    "highest": 1600.0
+  }
+}

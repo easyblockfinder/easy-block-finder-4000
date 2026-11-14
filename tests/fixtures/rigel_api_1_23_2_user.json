@@ -1,0 +1,18 @@
+{
+  "version": "1.23.2",
+  "hr_total": 12.5,
+  "shares": {
+    "accepted": 4,
+    "rejected": 1,
+    "invalid": 0
+  },
+  "pool": "stratum+tcp://solo-rvn.2miners.com:7070",
+  "algorithms": [
+    {
+      "name": "kawpow",
+      "hashrate": 12.5,
+      "shares": { "accepted": 4, "rejected": 1 },
+      "pool": "stratum+tcp://solo-rvn.2miners.com:7070"
+    }
+  ]
+}

@@ -1,0 +1,1694 @@
+"""Single-window Easy Block Finder 4000 UI + system tray."""
+
+from __future__ import annotations
+
+from app_meta import (
+    APP_NAME,
+    APP_TITLE,
+    APP_VERSION_LABEL,
+    load_app_icon,
+    load_app_logo_pixmap,
+)
+from PyQt6.QtCore import QEvent, QObject, QThread, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPixmap
+from PyQt6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpinBox,
+    QStackedWidget,
+    QStyle,
+    QSystemTrayIcon,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from monitor.hardware_gate import network_block_reason
+from networks.profiles import get_profile, list_profiles, normalize_network_id
+from ui.donate_dialog import DonateDialog
+from ui.network_select import NetworkSelectPage
+from ui.settings_store import load_settings, save_settings, settings_file
+from worker.controller import MiningController, MiningStats
+
+
+class _StopWorker(QThread):
+    """Run controller.stop() off the UI thread; result returned via signal."""
+
+    finished_ok = pyqtSignal(bool)
+
+    def __init__(self, controller: MiningController) -> None:
+        super().__init__()
+        self._controller = controller
+
+    def run(self) -> None:  # noqa: N802
+        ok = self._controller.stop()
+        self.finished_ok.emit(bool(ok))
+
+APP_QSS = """
+QMainWindow, QScrollArea, QWidget#root {
+    background: #eef1f4;
+    color: #15202b;
+}
+QLabel#brand {
+    color: #0b3d2e;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+QLabel#tagline {
+    color: #4a5a68;
+    font-size: 12px;
+}
+QLabel#sectionTitle {
+    color: #0b3d2e;
+    font-size: 13px;
+    font-weight: 700;
+}
+QFrame#panel {
+    background: #f7f9fb;
+    border: 1px solid #d5dde5;
+    border-radius: 10px;
+}
+QLineEdit, QSpinBox, QTextEdit {
+    background: #ffffff;
+    border: 1px solid #c8d2dc;
+    border-radius: 8px;
+    padding: 8px 10px;
+    selection-background-color: #0d9488;
+    font-size: 13px;
+}
+QLineEdit:focus, QSpinBox:focus, QTextEdit:focus {
+    border: 1px solid #0d9488;
+}
+QLineEdit:disabled, QSpinBox:disabled {
+    background: #e8edf2;
+    color: #6b7c8a;
+}
+QPushButton#startBtn {
+    background: #0d9488;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-weight: 700;
+    font-size: 13px;
+    min-width: 110px;
+}
+QPushButton#startBtn:hover { background: #0f766e; }
+QPushButton#startBtn:disabled { background: #9bb0b8; }
+QPushButton#stopBtn {
+    background: #ffffff;
+    color: #9f1239;
+    border: 1px solid #e11d48;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-weight: 700;
+    font-size: 13px;
+    min-width: 110px;
+}
+QPushButton#stopBtn:hover { background: #fff1f2; }
+QPushButton#stopBtn:disabled {
+    color: #9bb0b8;
+    border-color: #c8d2dc;
+    background: #f0f3f6;
+}
+QLabel#unitFixed {
+    color: #334155;
+    font-size: 13px;
+    font-weight: 700;
+    padding-left: 2px;
+    min-width: 28px;
+}
+QLabel#statKey {
+    color: #5b6b78;
+    font-size: 11px;
+}
+QLabel#statVal {
+    color: #15202b;
+    font-size: 13px;
+    font-weight: 600;
+}
+QLabel#statValMono {
+    color: #15202b;
+    font-size: 12px;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+}
+QLabel#statusLine {
+    color: #334155;
+    font-size: 12px;
+    background: #e8f5f2;
+    border: 1px solid #b7e0d6;
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+QFrame#blockAlert {
+    background: #fff7ed;
+    border: 2px solid #ea580c;
+    border-radius: 10px;
+}
+QLabel#blockAlertTitle {
+    color: #9a3412;
+    font-size: 14px;
+    font-weight: 700;
+}
+QLabel#blockAlertBody {
+    color: #7c2d12;
+    font-size: 12px;
+}
+QFrame#blockDetail, QFrame#shareDetail {
+    background: #ffffff;
+    border: 1px solid #d5dde5;
+    border-radius: 8px;
+}
+QCheckBox {
+    spacing: 8px;
+    font-size: 12px;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid #c8d2dc;
+    background: #fff;
+}
+QCheckBox::indicator:checked {
+    background: #0d9488;
+    border-color: #0d9488;
+}
+"""
+
+
+class _StatsBridge(QObject):
+    updated = pyqtSignal(object)
+
+
+def _stat_pair(key: str, mono: bool = False) -> tuple[QLabel, QLabel]:
+    k = QLabel(key)
+    k.setObjectName("statKey")
+    v = QLabel("—")
+    v.setObjectName("statValMono" if mono else "statVal")
+    v.setWordWrap(True)
+    v.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    v.setMinimumHeight(22)
+    v.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
+    return k, v
+
+
+def _temp_spin_row(spin: QSpinBox) -> QWidget:
+    """Digit SpinBox + fixed °C label (unit cannot be removed)."""
+    wrap = QWidget()
+    lay = QHBoxLayout(wrap)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(6)
+    spin.setMinimumHeight(34)
+    spin.setSuffix("")  # unit in separate label
+    unit = QLabel("°C")
+    unit.setObjectName("unitFixed")
+    unit.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+    lay.addWidget(spin, 1)
+    lay.addWidget(unit, 0)
+    return wrap
+
+
+def _make_tray_icon() -> QIcon:
+    icon = load_app_icon()
+    if not icon.isNull():
+        return icon
+    # Fallback if asset missing
+    pix = QPixmap(64, 64)
+    pix.fill(QColor("#0a1628"))
+    return QIcon(pix)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle(APP_TITLE)
+        self.setStyleSheet(APP_QSS)
+
+        self._cfg = load_settings()
+        self._network_id = normalize_network_id(str(self._cfg.get("selected_network") or "btc"))
+        self._profile = get_profile(self._network_id)
+        w = int(self._cfg.get("window_width") or 760)
+        h = int(self._cfg.get("window_height") or 720)
+        self.resize(max(680, w), max(640, h))
+        self.setMinimumSize(680, 620)
+
+        self._bridge = _StatsBridge()
+        self._bridge.updated.connect(self._apply_stats)
+        self.controller = MiningController(on_stats=self._bridge.updated.emit)
+        self._stop_worker: _StopWorker | None = None
+        self._stop_busy = False
+        self._pending_quit = False
+        self._last_thermal_paused: bool | None = None
+        self._last_block_notify_key: str | None = None
+        self._tray_exit = False
+        self._stats_url = ""
+
+        self._stack = QStackedWidget()
+        self.setCentralWidget(self._stack)
+
+        self._select_page = NetworkSelectPage(
+            self._network_id, blocked=self._network_blocked_map()
+        )
+        self._select_page.network_chosen.connect(self._on_network_chosen)
+        self._stack.addWidget(self._select_page)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._mine_scroll = scroll
+        self._stack.addWidget(scroll)
+
+        root = QWidget()
+        root.setObjectName("root")
+        scroll.setWidget(root)
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(14)
+
+        # Brand logo + Donate (top right)
+        head = QHBoxLayout()
+        brand_col = QVBoxLayout()
+        logo_pix = load_app_logo_pixmap(440, 96)
+        brand = QLabel()
+        brand.setObjectName("brand")
+        if not logo_pix.isNull():
+            brand.setPixmap(logo_pix)
+            brand.setMinimumHeight(72)
+        else:
+            brand.setText(APP_NAME)
+            brand.setFont(QFont("Bahnschrift", 26, QFont.Weight.Bold))
+        brand_col.addWidget(brand)
+        ver = QLabel(APP_VERSION_LABEL)
+        ver.setObjectName("tagline")
+        brand_col.addWidget(ver)
+        head.addLayout(brand_col, 1)
+        self.btn_donate = QPushButton("Donate")
+        self.btn_donate.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_donate.setMinimumHeight(36)
+        self.btn_donate.setStyleSheet(
+            "QPushButton { background: #d32f2f; color: #ffffff; font-weight: 700; "
+            "padding: 6px 16px; border-radius: 6px; }"
+            "QPushButton:hover { background: #e53935; }"
+        )
+        self.btn_donate.clicked.connect(self._on_donate)
+        head.addWidget(self.btn_donate, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(head)
+
+        net_row = QHBoxLayout()
+        self.lbl_network_badge = QLabel("")
+        self.lbl_network_badge.setObjectName("sectionTitle")
+        self.btn_change_network = QPushButton("Change network")
+        self.btn_change_network.clicked.connect(self._on_change_network)
+        net_row.addWidget(self.lbl_network_badge, 1)
+        net_row.addWidget(self.btn_change_network, 0)
+        layout.addLayout(net_row)
+
+        self.lbl_tagline = QLabel("")
+        self.lbl_tagline.setObjectName("tagline")
+        self.lbl_tagline.setWordWrap(True)
+        layout.addWidget(self.lbl_tagline)
+
+        diff_note = QLabel(
+            "Share difficulty (mining.set_difficulty) is for pool feedback only; "
+            "a low share difficulty does not change real block find odds. "
+            "The accepted counter increases only when the server mining.submit response has result=true."
+        )
+        diff_note.setObjectName("tagline")
+        diff_note.setWordWrap(True)
+        layout.addWidget(diff_note)
+
+        # Settings panel
+        settings = QFrame()
+        settings.setObjectName("panel")
+        s_layout = QVBoxLayout(settings)
+        s_layout.setContentsMargins(14, 12, 14, 12)
+        s_layout.setSpacing(10)
+
+        st = QLabel("Settings")
+        st.setObjectName("sectionTitle")
+        s_layout.addWidget(st)
+
+        self.addr_lbl = QLabel("Payout address")
+        self.addr_lbl.setObjectName("statKey")
+        s_layout.addWidget(self.addr_lbl)
+
+        self.address_edit = QLineEdit()
+        self.address_edit.setPlaceholderText("network wallet address — saved automatically")
+        self.address_edit.setMinimumHeight(36)
+        self.address_edit.setFont(QFont("Cascadia Mono", 11))
+        self.address_edit.editingFinished.connect(self._persist_form)
+        self.address_edit.textChanged.connect(self._on_address_changed)
+        s_layout.addWidget(self.address_edit)
+
+        self._addr_hint = QLabel("")
+        self._addr_hint.setObjectName("statKey")
+        self._addr_hint.setWordWrap(True)
+        s_layout.addWidget(self._addr_hint)
+        self._refresh_addr_hint()
+
+        row = QHBoxLayout()
+        row.setSpacing(12)
+
+        def _spin_block(title: str, widget: QWidget) -> QVBoxLayout:
+            box = QVBoxLayout()
+            box.setSpacing(4)
+            lab = QLabel(title)
+            lab.setObjectName("statKey")
+            box.addWidget(lab)
+            box.addWidget(widget)
+            return box
+
+        self.intensity = QSpinBox()
+        self.intensity.setRange(1, 10)
+        self.intensity.setValue(int(self._cfg.get("intensity") or 1))
+        self.intensity.setMinimumHeight(34)
+        self.intensity.valueChanged.connect(self._persist_form)
+
+        self.pause_temp = QSpinBox()
+        self.pause_temp.setRange(50, 95)
+        self.pause_temp.setValue(int(self._cfg.get("pause_temp") or 80))
+        self.pause_temp.valueChanged.connect(self._persist_form)
+
+        self.resume_temp = QSpinBox()
+        self.resume_temp.setRange(40, 90)
+        self.resume_temp.setValue(int(self._cfg.get("resume_temp") or 70))
+        self.resume_temp.valueChanged.connect(self._persist_form)
+
+        row.addLayout(_spin_block("Intensity", self.intensity))
+        row.addLayout(_spin_block("Pause at", _temp_spin_row(self.pause_temp)))
+        row.addLayout(_spin_block("Resume at", _temp_spin_row(self.resume_temp)))
+        s_layout.addLayout(row)
+
+        self.test_mode = QCheckBox("Test mode (no pool, no real submit)")
+        self.test_mode.setChecked(bool(self._cfg.get("test_mode")))
+        self.test_mode.toggled.connect(self._persist_form)
+        s_layout.addWidget(self.test_mode)
+
+        self.cpu_threads = QSpinBox()
+        self.cpu_threads.setRange(0, 256)
+        self.cpu_threads.setValue(int(self._cfg.get("cpu_thread_limit") or 0))
+        self.cpu_threads.setMinimumHeight(34)
+        self.cpu_threads.valueChanged.connect(self._persist_form)
+        self.cpu_threads_wrap = _spin_block("CPU threads (0=auto)", self.cpu_threads)
+        s_layout.addLayout(self.cpu_threads_wrap)
+
+        self.pause_battery = QCheckBox("Stop XMR mining on battery power")
+        self.pause_battery.setChecked(bool(self._cfg.get("pause_on_battery", True)))
+        self.pause_battery.toggled.connect(self._persist_form)
+        s_layout.addWidget(self.pause_battery)
+
+        self.lbl_thermal_src = QLabel("Temperature source: —")
+        self.lbl_thermal_src.setObjectName("statKey")
+        self.lbl_thermal_src.setWordWrap(True)
+        s_layout.addWidget(self.lbl_thermal_src)
+
+        self.chk_allow_no_temp = QCheckBox(
+            "Allow mining without temperature (unsafe — no thermal guard)"
+        )
+        self.chk_allow_no_temp.setChecked(
+            bool(self._cfg.get("allow_mine_without_temp", False))
+        )
+        self.chk_allow_no_temp.toggled.connect(self._on_allow_no_temp_toggled)
+        s_layout.addWidget(self.chk_allow_no_temp)
+
+        self.chk_miner_consent = QCheckBox(
+            "Allow download of official miners when needed (XMRig / Rigel)"
+        )
+        self.chk_miner_consent.setChecked(
+            bool(self._cfg.get("miner_download_consent", False))
+        )
+        self.chk_miner_consent.toggled.connect(self._persist_form)
+        s_layout.addWidget(self.chk_miner_consent)
+        miner_hint = QLabel(
+            "Binaries are not in the app package. With consent, only the engine for "
+            "the network you Start is fetched from the official GitHub release and "
+            "SHA-256 verified. Antivirus is never disabled by this app."
+        )
+        miner_hint.setObjectName("tagline")
+        miner_hint.setWordWrap(True)
+        s_layout.addWidget(miner_hint)
+
+        self.lbl_thermal_unsafe = QLabel("")
+        self.lbl_thermal_unsafe.setWordWrap(True)
+        self.lbl_thermal_unsafe.setStyleSheet(
+            "color: #d32f2f; font-weight: 700; padding: 4px 0;"
+        )
+        self.lbl_thermal_unsafe.setVisible(False)
+        s_layout.addWidget(self.lbl_thermal_unsafe)
+        self._refresh_thermal_unsafe_banner()
+
+        self.lbl_engine_fee = QLabel("Motor fee share: 0")
+        self.lbl_engine_fee.setObjectName("statKey")
+        s_layout.addWidget(self.lbl_engine_fee)
+        self.lbl_unattributed = QLabel("Unattributed shares: 0")
+        self.lbl_unattributed.setObjectName("statKey")
+        s_layout.addWidget(self.lbl_unattributed)
+
+        fee_hint = QLabel(
+            "Note: XMRig/Rigel developer fees are not added to your accepted count. "
+            "This app does not redirect mining to donations — use Donate to support."
+        )
+        fee_hint.setObjectName("tagline")
+        fee_hint.setWordWrap(True)
+        s_layout.addWidget(fee_hint)
+
+        self.lbl_gpu_bus = QLabel("GPU bus/UUID: (auto on single GPU)")
+        self.lbl_gpu_bus.setObjectName("statKey")
+        self.lbl_gpu_bus.setWordWrap(True)
+        s_layout.addWidget(self.lbl_gpu_bus)
+        self.btn_pick_gpu = QPushButton("Pick GPU (bus/UUID)")
+        self.btn_pick_gpu.clicked.connect(self._on_pick_gpu)
+        s_layout.addWidget(self.btn_pick_gpu)
+
+        btns = QHBoxLayout()
+        btns.setSpacing(10)
+        self.start_btn = QPushButton("Start")
+        self.start_btn.setObjectName("startBtn")
+        self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setObjectName("stopBtn")
+        self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_btn.setEnabled(False)
+        self.start_btn.clicked.connect(self._on_start)
+        self.stop_btn.clicked.connect(self._on_stop)
+        btns.addWidget(self.start_btn)
+        btns.addWidget(self.stop_btn)
+        btns.addStretch(1)
+        s_layout.addLayout(btns)
+        layout.addWidget(settings)
+
+        # Status panel — 2-column grid
+        status = QFrame()
+        status.setObjectName("panel")
+        st_outer = QVBoxLayout(status)
+        st_outer.setContentsMargins(14, 12, 14, 12)
+        st_outer.setSpacing(10)
+
+        st2 = QLabel("Status")
+        st2.setObjectName("sectionTitle")
+        st_outer.addWidget(st2)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(10)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+
+        self.lbl_conn_k, self.lbl_conn = _stat_pair("Connection")
+        self.lbl_device_k, self.lbl_device = _stat_pair("Device")
+        self.lbl_rate_k, self.lbl_rate = _stat_pair("Hash rate")
+        self.lbl_total_k, self.lbl_total = _stat_pair("Total attempts", mono=True)
+        self.lbl_time_k, self.lbl_time = _stat_pair("Elapsed")
+        self.lbl_shares_k, self.lbl_shares = _stat_pair("Share")
+        self.lbl_diff_k, self.lbl_diff = _stat_pair("Server set_difficulty")
+        self.lbl_temp_k, self.lbl_temp = _stat_pair("Temperature")
+        self.lbl_job_k, self.lbl_job = _stat_pair("Current job ID", mono=True)
+        self.lbl_payout_k, self.lbl_payout = _stat_pair("Payout address", mono=True)
+        self.lbl_coinbase_k, self.lbl_coinbase = _stat_pair("Coinbase / note")
+
+        pairs = [
+            (self.lbl_conn_k, self.lbl_conn),
+            (self.lbl_device_k, self.lbl_device),
+            (self.lbl_rate_k, self.lbl_rate),
+            (self.lbl_total_k, self.lbl_total),
+            (self.lbl_time_k, self.lbl_time),
+            (self.lbl_shares_k, self.lbl_shares),
+            (self.lbl_diff_k, self.lbl_diff),
+            (self.lbl_temp_k, self.lbl_temp),
+            (self.lbl_job_k, self.lbl_job),
+            (self.lbl_payout_k, self.lbl_payout),
+            (self.lbl_coinbase_k, self.lbl_coinbase),
+        ]
+        for i, (k, v) in enumerate(pairs):
+            r, c = divmod(i, 2)
+            grid.addWidget(k, r * 2, c * 2)
+            grid.addWidget(v, r * 2 + 1, c * 2, 1, 2)
+
+        st_outer.addLayout(grid)
+
+        wk = QLabel("Last kernel")
+        wk.setObjectName("statKey")
+        st_outer.addWidget(wk)
+        self.lbl_work = QLabel("no kernel yet (connected ≠ hashing)")
+        self.lbl_work.setObjectName("statValMono")
+        self.lbl_work.setWordWrap(True)
+        self.lbl_work.setMinimumHeight(36)
+        self.lbl_work.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        st_outer.addWidget(self.lbl_work)
+
+        self.lbl_status = QLabel("Ready")
+        self.lbl_status.setObjectName("statusLine")
+        self.lbl_status.setWordWrap(True)
+        self.lbl_status.setMinimumHeight(40)
+        st_outer.addWidget(self.lbl_status)
+
+        stats_row = QHBoxLayout()
+        self.lbl_stats_url = QLabel("Pool stats: —")
+        self.lbl_stats_url.setObjectName("statKey")
+        self.lbl_stats_url.setWordWrap(True)
+        self.btn_stats = QPushButton("Open pool page")
+        self.btn_stats.setEnabled(False)
+        self.btn_stats.clicked.connect(self._open_ckpool_stats)
+        stats_row.addWidget(self.lbl_stats_url, 1)
+        stats_row.addWidget(self.btn_stats, 0)
+        st_outer.addLayout(stats_row)
+        self.lbl_stats_hint = QLabel(
+            "Server stats may lag; with low hash rate / high mindiff they "
+            "may not show up immediately."
+        )
+        self.lbl_stats_hint.setObjectName("statKey")
+        self.lbl_stats_hint.setWordWrap(True)
+        st_outer.addWidget(self.lbl_stats_hint)
+
+        submit_title = QLabel("mining.submit log (request id)")
+        submit_title.setObjectName("statKey")
+        st_outer.addWidget(submit_title)
+        self.submit_log_view = QTextEdit()
+        self.submit_log_view.setReadOnly(True)
+        self.submit_log_view.setMinimumHeight(70)
+        self.submit_log_view.setMaximumHeight(110)
+        self.submit_log_view.setFont(QFont("Cascadia Mono", 9))
+        self.submit_log_view.setPlaceholderText(
+            "Submit request/response pairs match by id here. Accepted only when result=true."
+        )
+        st_outer.addWidget(self.submit_log_view)
+        layout.addWidget(status)
+
+        # Block candidate alert (shown when found)
+        self.block_alert = QFrame()
+        self.block_alert.setObjectName("blockAlert")
+        self.block_alert.setVisible(False)
+        ba = QVBoxLayout(self.block_alert)
+        ba.setContentsMargins(14, 12, 14, 12)
+        ba.setSpacing(6)
+        self.lbl_block_alert_title = QLabel("BLOCK CANDIDATE")
+        self.lbl_block_alert_title.setObjectName("blockAlertTitle")
+        ba.addWidget(self.lbl_block_alert_title)
+        self.lbl_block_alert_body = QLabel("")
+        self.lbl_block_alert_body.setObjectName("blockAlertBody")
+        self.lbl_block_alert_body.setWordWrap(True)
+        ba.addWidget(self.lbl_block_alert_body)
+        layout.addWidget(self.block_alert)
+
+        # Block candidate detail fields
+        block_panel = QFrame()
+        block_panel.setObjectName("panel")
+        bp = QVBoxLayout(block_panel)
+        bp.setContentsMargins(14, 12, 14, 12)
+        bp.setSpacing(8)
+        bt = QLabel("Latest block candidate")
+        bt.setObjectName("sectionTitle")
+        bp.addWidget(bt)
+        note = QLabel(
+            "No payout is shown until the network accepts the block. This area lists candidates only."
+        )
+        note.setObjectName("statKey")
+        note.setWordWrap(True)
+        bp.addWidget(note)
+
+        detail = QFrame()
+        detail.setObjectName("blockDetail")
+        dg = QGridLayout(detail)
+        dg.setContentsMargins(10, 8, 10, 8)
+        dg.setHorizontalSpacing(12)
+        dg.setVerticalSpacing(6)
+
+        self.lbl_blk_count_k, self.lbl_blk_count = _stat_pair("Candidate count")
+        self.lbl_blk_time_k, self.lbl_blk_time = _stat_pair("Time")
+        self.lbl_blk_nonce_k, self.lbl_blk_nonce = _stat_pair("Nonce", mono=True)
+        self.lbl_blk_job_k, self.lbl_blk_job = _stat_pair("Job ID", mono=True)
+        self.lbl_blk_status_k, self.lbl_blk_status = _stat_pair("Submit / pool")
+        self.lbl_blk_chain_k, self.lbl_blk_chain = _stat_pair("Chain status")
+        self.lbl_blk_hash_k, self.lbl_blk_hash = _stat_pair("Hash", mono=True)
+
+        blk_pairs = [
+            (self.lbl_blk_count_k, self.lbl_blk_count),
+            (self.lbl_blk_time_k, self.lbl_blk_time),
+            (self.lbl_blk_nonce_k, self.lbl_blk_nonce),
+            (self.lbl_blk_job_k, self.lbl_blk_job),
+            (self.lbl_blk_status_k, self.lbl_blk_status),
+            (self.lbl_blk_chain_k, self.lbl_blk_chain),
+        ]
+        for i, (k, v) in enumerate(blk_pairs):
+            r, c = divmod(i, 2)
+            dg.addWidget(k, r * 2, c * 2)
+            dg.addWidget(v, r * 2 + 1, c * 2, 1, 2)
+        dg.addWidget(self.lbl_blk_hash_k, 6, 0)
+        dg.addWidget(self.lbl_blk_hash, 7, 0, 1, 4)
+        self.lbl_blk_hash.setMinimumHeight(40)
+        bp.addWidget(detail)
+
+        self.block_list = QTextEdit()
+        self.block_list.setReadOnly(True)
+        self.block_list.setMinimumHeight(72)
+        self.block_list.setMaximumHeight(110)
+        self.block_list.setPlaceholderText("No block candidates yet (expected).")
+        self.block_list.setFont(QFont("Cascadia Mono", 10))
+        bp.addWidget(self.block_list)
+        layout.addWidget(block_panel)
+
+        # Share events
+        share_panel = QFrame()
+        share_panel.setObjectName("panel")
+        sp = QVBoxLayout(share_panel)
+        sp.setContentsMargins(14, 12, 14, 12)
+        sp.setSpacing(8)
+        sht = QLabel("Shares (pool target — not a block reward)")
+        sht.setObjectName("sectionTitle")
+        sp.addWidget(sht)
+
+        share_detail = QFrame()
+        share_detail.setObjectName("shareDetail")
+        sg = QGridLayout(share_detail)
+        sg.setContentsMargins(10, 8, 10, 8)
+        sg.setHorizontalSpacing(12)
+        sg.setVerticalSpacing(6)
+        self.lbl_sh_count_k, self.lbl_sh_count = _stat_pair("Submitted")
+        self.lbl_sh_acc_k, self.lbl_sh_acc = _stat_pair("Accepted / rejected")
+        self.lbl_sh_nonce_k, self.lbl_sh_nonce = _stat_pair("Last nonce", mono=True)
+        self.lbl_sh_status_k, self.lbl_sh_status = _stat_pair("Last status")
+        self.lbl_sh_hash_k, self.lbl_sh_hash = _stat_pair("Last hash", mono=True)
+        sh_pairs = [
+            (self.lbl_sh_count_k, self.lbl_sh_count),
+            (self.lbl_sh_acc_k, self.lbl_sh_acc),
+            (self.lbl_sh_nonce_k, self.lbl_sh_nonce),
+            (self.lbl_sh_status_k, self.lbl_sh_status),
+        ]
+        for i, (k, v) in enumerate(sh_pairs):
+            r, c = divmod(i, 2)
+            sg.addWidget(k, r * 2, c * 2)
+            sg.addWidget(v, r * 2 + 1, c * 2, 1, 2)
+        sg.addWidget(self.lbl_sh_hash_k, 4, 0)
+        sg.addWidget(self.lbl_sh_hash, 5, 0, 1, 4)
+        self.lbl_sh_hash.setMinimumHeight(36)
+        sp.addWidget(share_detail)
+
+        self.share_list = QTextEdit()
+        self.share_list.setReadOnly(True)
+        self.share_list.setMinimumHeight(72)
+        self.share_list.setMaximumHeight(110)
+        self.share_list.setPlaceholderText("No shares yet.")
+        self.share_list.setFont(QFont("Cascadia Mono", 10))
+        sp.addWidget(self.share_list)
+        layout.addWidget(share_panel)
+
+        # Event log
+        log_panel = QFrame()
+        log_panel.setObjectName("panel")
+        lp = QVBoxLayout(log_panel)
+        lp.setContentsMargins(14, 12, 14, 12)
+        lp.setSpacing(8)
+        lt = QLabel("Event log")
+        lt.setObjectName("sectionTitle")
+        lp.addWidget(lt)
+        self.event_log = QTextEdit()
+        self.event_log.setReadOnly(True)
+        self.event_log.setMinimumHeight(90)
+        self.event_log.setMaximumHeight(140)
+        self.event_log.setPlaceholderText("Jobs, shares, block candidates, and pool replies appear here.")
+        self.event_log.setFont(QFont("Cascadia Mono", 10))
+        lp.addWidget(self.event_log)
+        layout.addWidget(log_panel)
+
+        foot = QLabel(f"Settings file: {settings_file()}")
+        foot.setObjectName("statKey")
+        foot.setWordWrap(True)
+        layout.addWidget(foot)
+        layout.addStretch(1)
+
+        self._addr_save_timer = QTimer(self)
+        self._addr_save_timer.setSingleShot(True)
+        self._addr_save_timer.timeout.connect(self._persist_form)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._push_settings)
+        self._timer.start(1000)
+
+        self.lbl_rate.setText("0 H/s")
+        self.lbl_total.setText("0")
+        self.lbl_time.setText("0s")
+        self.lbl_shares.setText("accepted 0 / rejected 0")
+        self.lbl_conn.setText("Not connected")
+        self.lbl_blk_count.setText("0")
+        self.lbl_blk_time.setText("—")
+        self.lbl_blk_nonce.setText("—")
+        self.lbl_blk_job.setText("—")
+        self.lbl_blk_status.setText("None yet")
+        self.lbl_blk_chain.setText("—")
+        self.lbl_blk_hash.setText("—")
+        self.lbl_coinbase.setText("—")
+        self.lbl_sh_count.setText("0")
+        self.lbl_sh_acc.setText("0 / 0")
+        self.lbl_sh_nonce.setText("—")
+        self.lbl_sh_status.setText("None yet")
+        self.lbl_sh_hash.setText("—")
+
+        self._setup_tray()
+        self._apply_network_to_ui()
+        self._stack.setCurrentIndex(0)
+
+    def _network_blocked_map(self) -> dict[str, str]:
+        """Network picker: cpu-only marker only (no OpenCL probe)."""
+        out: dict[str, str] = {}
+        for prof in list_profiles():
+            reason = network_block_reason(prof.id, probe_gpu=False)
+            if reason:
+                out[prof.id] = reason
+        return out
+
+    def _apply_network_to_ui(self) -> None:
+        self._profile = get_profile(self._network_id)
+        self.setWindowTitle(f"{APP_NAME} — {self._profile.display_name}")
+        self.lbl_network_badge.setText(
+            f"Network: {self._profile.display_name}  ·  {self._profile.algorithm}  ·  "
+            f"{self._profile.stratum_host}:{self._profile.stratum_port}"
+        )
+        self.lbl_tagline.setText(
+            f"{self._profile.hardware_hint} · no earnings guarantee · "
+            f"accepted share ≠ payout · pool: {self._profile.pool_fee_note} · "
+            f"engine: {self._profile.engine_fee_note}"
+        )
+        self.addr_lbl.setText(f"{self._profile.display_name} payout address")
+        addrs = self._cfg.get("address_by_network") or {}
+        self.address_edit.setText(str(addrs.get(self._network_id) or self._cfg.get("address") or ""))
+        ready = self._profile.mining_ready
+        # No heavy OpenCL at startup; probe_gpu=True before Start
+        blocked = network_block_reason(self._network_id, probe_gpu=False)
+        self.start_btn.setEnabled(
+            ready and not blocked and not self.controller.is_running()
+        )
+        is_xmr = self._network_id == "xmr"
+        is_gpu_managed = self._network_id in ("rvn", "erg")
+        is_managed = self._profile.engine_kind == "managed_external"
+        self.cpu_threads.setVisible(is_xmr)
+        self.pause_battery.setVisible(is_xmr)
+        self.btn_pick_gpu.setVisible(is_gpu_managed or self._profile.thermal_source == "gpu_nvidia")
+        bus = self._cfg.get("gpu_bus_id") or ""
+        uuid = self._cfg.get("gpu_uuid") or ""
+        self.lbl_gpu_bus.setText(
+            f"GPU bus={bus or 'auto'} uuid={(uuid[:13] + '…') if uuid else 'auto'}"
+        )
+        self.lbl_gpu_bus.setVisible(is_gpu_managed or self._network_id in ("btc", "bch", "rvn"))
+        # Native OpenCL counter not on XMR/RVN/ERG — avoid misleading label
+        if is_managed:
+            self.lbl_total_k.setText("Total attempts")
+            self.lbl_total.setText("— (external engine)")
+            self.lbl_work.setText(
+                "External engine: see hash rate and share rows "
+                "(OpenCL total attempts only on BTC/BCH)."
+            )
+        else:
+            self.lbl_total_k.setText("Total attempts")
+        for i in range(self.cpu_threads_wrap.count()):
+            w = self.cpu_threads_wrap.itemAt(i).widget()
+            if w:
+                w.setVisible(is_xmr)
+        if blocked:
+            self.lbl_status.setText(blocked)
+        elif not ready:
+            self.lbl_status.setText(
+                f"{self._profile.display_name} engine is not connected yet — see the note on network selection."
+            )
+        self._refresh_addr_hint()
+        if is_xmr:
+            self.lbl_job_k.setText("Current work (height/diff)")
+            self.btn_stats.setText("Open rewards page")
+            self.lbl_stats_hint.setText(
+                "Open the Kryptex page for rewards (accepted = share, not a block). "
+                "Work row shows height/diff from XMRig; no stratum job_id."
+            )
+        elif self._network_id == "bch":
+            self.lbl_job_k.setText("Current job ID")
+            self.btn_stats.setText("Open account page")
+            self.lbl_stats_hint.setText(
+                "2Miners home page does not list you; you need /account/bitcoincash:…. "
+                "Without a first accepted share the site shows /search (mindiff ~32K — can take a while on GPU)."
+            )
+        else:
+            self.lbl_job_k.setText("Current job ID")
+            self.btn_stats.setText("Open pool page")
+            self.lbl_stats_hint.setText(
+                "Server stats may lag; with low hash rate / high mindiff they "
+                "may not show up immediately."
+            )
+        preview = self._profile.stats_url_for(self.address_edit.text().strip())
+        if preview:
+            if is_xmr:
+                self.lbl_stats_url.setText(
+                    f"Rewards / account (Kryptex; accepted≠block): {preview}"
+                )
+            else:
+                self.lbl_stats_url.setText(f"Stats: {preview}")
+            self.btn_stats.setEnabled(True)
+            self._stats_url = preview
+        else:
+            if is_xmr:
+                self.lbl_stats_url.setText(
+                    "Rewards / account: Kryptex link enables when you enter an XMR address"
+                )
+            else:
+                self.lbl_stats_url.setText(
+                    "Stats: enabled when address is set / network supports it"
+                )
+            self.btn_stats.setEnabled(False)
+            self._stats_url = ""
+
+    def _on_network_chosen(self, network_id: str) -> None:
+        if not self._switch_network(network_id):
+            return
+        self._stack.setCurrentWidget(self._mine_scroll)
+
+    def _on_pick_gpu(self) -> None:
+        try:
+            from monitor.gpu_devices import list_gpus, list_nvidia_only
+
+            # RVN/ERG (Rigel) are CUDA-only; BTC/BCH accept any OpenCL vendor
+            if self._network_id in ("rvn", "erg"):
+                devices = list_nvidia_only()
+            else:
+                devices = list_gpus()
+        except Exception as exc:
+            QMessageBox.warning(self, "GPU list", str(exc))
+            return
+        if not devices:
+            msg = (
+                "No NVIDIA GPU found (required for RVN/ERG)."
+                if self._network_id in ("rvn", "erg")
+                else "No OpenCL GPU found (NVIDIA / AMD / Intel)."
+            )
+            QMessageBox.warning(self, "GPU list", msg)
+            return
+        lines = [
+            f"{i}: [{d.vendor}] {d.name} bus={d.bus_id} "
+            f"free={d.free_vram_mb}MB/{d.total_vram_mb}MB"
+            for i, d in enumerate(devices)
+        ]
+        # Simple pick: auto-save single GPU; multi-GPU uses dialog
+        if len(devices) == 1:
+            d = devices[0]
+            save_settings({"gpu_bus_id": d.bus_id, "gpu_uuid": d.uuid})
+            self._cfg = load_settings()
+            self._apply_network_to_ui()
+            QMessageBox.information(
+                self,
+                "GPU",
+                f"Selected (single GPU):\n[{d.vendor}] {d.name}\n"
+                f"bus={d.bus_id}\nfree={d.free_vram_mb}MB",
+            )
+            return
+        # Multi-GPU: list for user; dialog instead of defaulting to first card
+        from PyQt6.QtWidgets import QInputDialog
+
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Pick GPU",
+            "Card to match by PCI bus / UUID (NVIDIA / AMD / Intel):",
+            lines,
+            0,
+            False,
+        )
+        if not ok:
+            return
+        idx = lines.index(choice)
+        d = devices[idx]
+        save_settings({"gpu_bus_id": d.bus_id, "gpu_uuid": d.uuid})
+        self._cfg = load_settings()
+        self._apply_network_to_ui()
+
+    def _on_change_network(self) -> None:
+        if not self._ensure_stopped_for_network_switch():
+            return
+        self._select_page = NetworkSelectPage(
+            self._network_id, blocked=self._network_blocked_map()
+        )
+        self._select_page.network_chosen.connect(self._on_network_chosen)
+        old = self._stack.widget(0)
+        self._stack.removeWidget(old)
+        old.deleteLater()
+        self._stack.insertWidget(0, self._select_page)
+        self._stack.setCurrentIndex(0)
+
+    def _set_stop_busy_ui(self, busy: bool) -> None:
+        self._stop_busy = busy
+        if busy:
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(False)
+            self.btn_change_network.setEnabled(False)
+            self.controller.stats.status = "Stopping…"
+            self._apply_stats(self.controller.stats)
+        else:
+            # keep network switch disabled while stop_failed
+            if not self.controller._stop_failed:
+                self.btn_change_network.setEnabled(True)
+
+    def _begin_async_stop(self, on_done) -> None:
+        """Stop without blocking the UI thread; on_done(ok) when finished."""
+        if self._stop_busy:
+            return
+        if self._stop_worker is not None and self._stop_worker.isRunning():
+            return
+        self._set_stop_busy_ui(True)
+        worker = _StopWorker(self.controller)
+        self._stop_worker = worker
+
+        def _finished(ok: bool) -> None:
+            self._set_stop_busy_ui(False)
+            on_done(bool(ok))
+            worker.deleteLater()
+            if self._stop_worker is worker:
+                self._stop_worker = None
+
+        worker.finished_ok.connect(_finished)
+        worker.start()
+
+    def _ensure_stopped_for_network_switch(self) -> bool:
+        """Network cannot change until stop completes. Starts async stop if running (returns False)."""
+        if self._stop_busy:
+            QMessageBox.information(
+                self, "Stopping", "Cannot change network until stop finishes."
+            )
+            return False
+        if not self.controller.is_running():
+            return True
+
+        def _after(ok: bool) -> None:
+            if not ok or self.controller.is_running():
+                QMessageBox.warning(
+                    self,
+                    "Could not stop",
+                    "Previous mining session has not closed yet. New network was not started.",
+                )
+                self.stop_btn.setEnabled(True)
+                self.start_btn.setEnabled(False)
+                return
+            self.start_btn.setEnabled(self._profile.mining_ready)
+            self.stop_btn.setEnabled(False)
+            self.address_edit.setEnabled(True)
+            self.test_mode.setEnabled(True)
+            self._on_change_network()
+
+        self._begin_async_stop(_after)
+        return False
+
+    def _switch_network(self, network_id: str) -> bool:
+        if not self._ensure_stopped_for_network_switch():
+            return False
+        self._persist_form()
+        self._network_id = normalize_network_id(network_id)
+        self._cfg["selected_network"] = self._network_id
+        save_settings({"selected_network": self._network_id})
+        self._cfg = load_settings()
+        self._apply_network_to_ui()
+        return True
+
+    def _open_ckpool_stats(self) -> None:
+        url = getattr(self, "_stats_url", "") or ""
+        if not url:
+            return
+        # safe open for bitcoincash: in path
+        q = QUrl.fromUserInput(url)
+        if not q.isValid():
+            q = QUrl(url)
+        QDesktopServices.openUrl(q)
+
+    def _on_address_changed(self, _text: str) -> None:
+        self._refresh_addr_hint()
+        self._addr_save_timer.start(600)
+
+    def _refresh_addr_hint(self) -> None:
+        text = self.address_edit.text().strip()
+        if not text:
+            self._addr_hint.setText("Address empty — enter before Start; it will be saved.")
+            return
+        self._addr_hint.setText("Saved / will save (no need to re-enter each time).")
+
+    def _on_donate(self) -> None:
+        DonateDialog(self).exec()
+
+    def _persist_form(self) -> None:
+        addr = self.address_edit.text().strip()
+        by_net = dict(self._cfg.get("address_by_network") or {})
+        by_net[self._network_id] = addr
+        save_settings(
+            {
+                "selected_network": self._network_id,
+                "address": addr,
+                "address_by_network": by_net,
+                "intensity": self.intensity.value(),
+                "pause_temp": self.pause_temp.value(),
+                "resume_temp": self.resume_temp.value(),
+                "test_mode": self.test_mode.isChecked(),
+                "cpu_thread_limit": self.cpu_threads.value(),
+                "pause_on_battery": self.pause_battery.isChecked(),
+                "allow_mine_without_temp": self.chk_allow_no_temp.isChecked(),
+                "miner_download_consent": self.chk_miner_consent.isChecked(),
+                "gpu_bus_id": self._cfg.get("gpu_bus_id"),
+                "gpu_uuid": self._cfg.get("gpu_uuid"),
+                "window_width": self.width(),
+                "window_height": self.height(),
+            }
+        )
+        self._cfg = load_settings()
+        self._refresh_addr_hint()
+        # Stats / rewards page preview
+        preview = self._profile.stats_url_for(addr)
+        if preview and not self.controller.is_running():
+            if self._network_id == "xmr":
+                self.lbl_stats_url.setText(
+                    f"Rewards / account (Kryptex; accepted≠block): {preview}"
+                )
+                self.btn_stats.setText("Open rewards page")
+            else:
+                self.lbl_stats_url.setText(f"Stats: {preview}")
+                self.btn_stats.setText("Open pool page")
+            self.btn_stats.setEnabled(True)
+            self._stats_url = preview
+    def _push_settings(self) -> None:
+        self.controller.update_settings(
+            self.intensity.value(),
+            self.pause_temp.value(),
+            self.resume_temp.value(),
+        )
+
+    def _on_allow_no_temp_toggled(self, _checked: bool = False) -> None:
+        self._refresh_thermal_unsafe_banner()
+        self._persist_form()
+
+    def _refresh_thermal_unsafe_banner(self, *, running_without_temp: bool = False) -> None:
+        allow = self.chk_allow_no_temp.isChecked()
+        if allow or running_without_temp:
+            self.lbl_thermal_unsafe.setText(
+                "UNSAFE: automatic thermal protection is off — monitor GPU/CPU heat manually."
+            )
+            self.lbl_thermal_unsafe.setVisible(True)
+        else:
+            self.lbl_thermal_unsafe.setText("")
+            self.lbl_thermal_unsafe.setVisible(False)
+
+    def _confirm_mine_without_temp(self, detail: str) -> bool:
+        """
+        Temp unreadable and override off.
+        Returns True if user allows this start (once or permanently).
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Temperature unreadable")
+        box.setText(
+            "Temperature cannot be read. Automatic thermal pause is unavailable.\n\n"
+            "Mining without a temperature guard can damage hardware."
+        )
+        box.setInformativeText(detail)
+        once = box.addButton(
+            "Mine once without guard", QMessageBox.ButtonRole.AcceptRole
+        )
+        always = box.addButton(
+            "Always allow (unsafe)", QMessageBox.ButtonRole.DestructiveRole
+        )
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is always:
+            self.chk_allow_no_temp.setChecked(True)
+            self._persist_form()
+            return True
+        if clicked is once:
+            return True
+        return False
+
+    def _ensure_external_miner_ready(self) -> bool:
+        """
+        Consent + download only the miner required for the current network.
+        Returns False if the user denied consent or download failed.
+        """
+        from engines.fetch_miner import ensure_miner
+        from engines.miner_catalog import (
+            get_miner_info,
+            is_miner_installed,
+            miner_id_for_network,
+            save_consent,
+        )
+        from ui.miner_consent_dialog import ask_miner_download_consent
+
+        miner_id = miner_id_for_network(self._network_id)
+        if not miner_id:
+            return True  # native OpenCL path — no external miner
+
+        if is_miner_installed(miner_id) and self.chk_miner_consent.isChecked():
+            return True
+
+        if not self.chk_miner_consent.isChecked():
+            if not ask_miner_download_consent(self, [miner_id]):
+                QMessageBox.information(
+                    self,
+                    "Download declined",
+                    "Mining with this network needs an official miner download. "
+                    "You can enable consent under Settings later.",
+                )
+                return False
+            self.chk_miner_consent.setChecked(True)
+            save_consent(True)
+            self._persist_form()
+
+        if is_miner_installed(miner_id):
+            return True
+
+        info = get_miner_info(miner_id)
+        QMessageBox.information(
+            self,
+            "Downloading miner",
+            f"Downloading {info.display_name} {info.version} from the official release.\n"
+            f"{info.url}\n\n"
+            "The file will be SHA-256 verified before use. This may take a minute.",
+        )
+        try:
+            from PyQt6.QtWidgets import QApplication
+
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                ensure_miner(miner_id, reverify=True, require_consent=True)
+            finally:
+                QApplication.restoreOverrideCursor()
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Miner download failed",
+                f"Could not download or verify {info.display_name}.\n\n"
+                f"{exc}\n\n"
+                "Check your network connection and try Start again. "
+                "This app does not disable Windows Defender.",
+            )
+            return False
+        return True
+
+    def _on_start(self) -> None:
+        self._persist_form()
+        self._push_settings()
+        blocked = network_block_reason(self._network_id, probe_gpu=True)
+        if blocked:
+            QMessageBox.warning(self, "Hardware / dependency", blocked)
+            return
+        if not self._profile.mining_ready:
+            QMessageBox.information(
+                self,
+                "No engine",
+                f"{self._profile.display_name} mining engine is not connected yet.\n"
+                f"{self._profile.notes}",
+            )
+            return
+        if self._profile.engine_kind == "managed_external" and self._network_id not in (
+            "xmr",
+            "rvn",
+            "erg",
+        ):
+            QMessageBox.information(
+                self,
+                "Managed engine",
+                f"{self._profile.display_name} will connect in a later release.",
+            )
+            return
+        if self._stop_busy:
+            QMessageBox.information(
+                self, "Stopping", "Cannot start a new session until stop finishes."
+            )
+            return
+
+        if not self._ensure_external_miner_ready():
+            return
+
+        from monitor.thermal_probe import probe_temperature_readable
+
+        allow_no_temp = self.chk_allow_no_temp.isChecked()
+        temp_ok, temp_detail = probe_temperature_readable(
+            self._network_id,
+            gpu_bus_id=str(self._cfg.get("gpu_bus_id") or ""),
+            gpu_uuid=str(self._cfg.get("gpu_uuid") or ""),
+        )
+        if not temp_ok and not allow_no_temp:
+            if not self._confirm_mine_without_temp(temp_detail):
+                return
+            allow_no_temp = True
+        if not temp_ok:
+            self._refresh_thermal_unsafe_banner(running_without_temp=True)
+
+        try:
+            import os
+
+            ncpu = os.cpu_count() or 1
+            self.cpu_threads.setMaximum(ncpu)
+            self.controller.update_cpu_options(
+                cpu_thread_limit=self.cpu_threads.value(),
+                pause_on_battery=self.pause_battery.isChecked(),
+                xmrig_donate_level=int(self._cfg.get("xmrig_donate_level") or 1),
+            )
+            self.controller.gpu_bus_id = str(self._cfg.get("gpu_bus_id") or "")
+            self.controller.gpu_uuid = str(self._cfg.get("gpu_uuid") or "")
+            self.controller.start(
+                self.address_edit.text(),
+                test_mode=self.test_mode.isChecked(),
+                network_id=self._network_id,
+                allow_mine_without_temp=allow_no_temp,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Could not start", str(exc))
+            return
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.address_edit.setEnabled(False)
+        self.test_mode.setEnabled(False)
+        self.btn_change_network.setEnabled(False)
+
+    def _on_stop(self) -> None:
+        def _after(ok: bool) -> None:
+            if not ok:
+                QMessageBox.warning(
+                    self,
+                    "Could not stop",
+                    "Miner thread or process did not exit in time. "
+                    "New session / network change blocked. Try Stop again.",
+                )
+                self.stop_btn.setEnabled(True)
+                self.start_btn.setEnabled(False)
+                return
+            self.start_btn.setEnabled(self._profile.mining_ready)
+            self.stop_btn.setEnabled(False)
+            self.address_edit.setEnabled(True)
+            self.test_mode.setEnabled(True)
+            self.btn_change_network.setEnabled(True)
+            self._persist_form()
+
+        self._begin_async_stop(_after)
+
+    def _sync_idle_controls_if_needed(self) -> None:
+        """Unlock Start on natural session end (battery/process); do not touch on stop_failed."""
+        if self._stop_busy:
+            return
+        if self.controller._stop_failed:
+            return
+        if self.controller.is_running():
+            return
+        # Not running but UI still looks busy — reset to idle
+        if self.stop_btn.isEnabled() and not self.start_btn.isEnabled():
+            self.start_btn.setEnabled(self._profile.mining_ready)
+            self.stop_btn.setEnabled(False)
+            self.address_edit.setEnabled(True)
+            self.test_mode.setEnabled(True)
+            self.btn_change_network.setEnabled(True)
+
+    def _apply_stats(self, stats: MiningStats) -> None:
+        self._sync_idle_controls_if_needed()
+        self.lbl_conn.setText(
+            "TEST (local)"
+            if stats.test_mode and stats.connected
+            else ("Connected" if stats.connected else "Not connected")
+        )
+        self.lbl_device.setText(stats.device_name or "—")
+        rate = stats.hashrate
+        if rate >= 1_000_000:
+            self.lbl_rate.setText(f"{rate / 1_000_000:.2f} MH/s")
+        elif rate >= 1000:
+            self.lbl_rate.setText(f"{rate / 1000:.2f} kH/s")
+        else:
+            self.lbl_rate.setText(f"{rate:.0f} H/s")
+        managed = self._profile.engine_kind == "managed_external"
+        if managed:
+            self.lbl_total.setText("— (external engine)")
+        else:
+            self.lbl_total.setText(f"{stats.total_hashes:,}")
+        self.lbl_time.setText(f"{stats.elapsed:.0f}s")
+        self.lbl_shares.setText(f"accepted {stats.accepted} / rejected {stats.rejected}")
+        self.lbl_engine_fee.setText(
+            f"Engine fee shares (not user accepted): {getattr(stats, 'engine_fee_shares', 0)}"
+        )
+        self.lbl_unattributed.setText(
+            f"Unattributed shares (not accepted): "
+            f"{getattr(stats, 'unattributed_shares', 0)}"
+        )
+        if getattr(stats, "thermal_source", ""):
+            self.lbl_thermal_src.setText(f"Temperature source: {stats.thermal_source}")
+        elif self._profile.thermal_source == "cpu":
+            self.lbl_thermal_src.setText(
+                "Temperature source: CPU (no auto pause if unreadable)"
+            )
+        if stats.server_difficulty is not None:
+            self.lbl_diff.setText(str(stats.server_difficulty))
+        elif stats.difficulty:
+            self.lbl_diff.setText(f"{stats.difficulty} (waiting for set_difficulty)")
+        else:
+            self.lbl_diff.setText("—")
+        self.lbl_job.setText(stats.current_job_id or "—")
+        self.lbl_payout.setText(stats.payout_address or "—")
+        self.lbl_coinbase.setText(stats.coinbase_status or "—")
+        if stats.block_store_error:
+            self.lbl_coinbase.setText(
+                (stats.coinbase_status or "") + f" | Store: {stats.block_store_error}"
+            )
+        if stats.ckpool_stats_url:
+            if self._network_id == "xmr":
+                self.lbl_stats_url.setText(
+                    f"Rewards / account (Kryptex; accepted≠block): {stats.ckpool_stats_url}"
+                )
+                self.btn_stats.setText("Open rewards page")
+            else:
+                self.lbl_stats_url.setText(
+                    f"Pool (check manually; accepted≠block): {stats.ckpool_stats_url}"
+                )
+                self.btn_stats.setText("Open pool page")
+            self.btn_stats.setEnabled(True)
+            self._stats_url = stats.ckpool_stats_url
+        else:
+            if self._network_id == "xmr":
+                self.lbl_stats_url.setText(
+                    "Rewards / account: Kryptex link enables when you enter an XMR address"
+                )
+            else:
+                self.lbl_stats_url.setText(
+                    "Pool stats: active when address set / network supports it"
+                )
+            self.btn_stats.setEnabled(False)
+            self._stats_url = ""
+        if stats.submit_rpc_log:
+            lines = []
+            for e in stats.submit_rpc_log[:15]:
+                lines.append(
+                    f"id={e.get('id')} sent={e.get('time_sent')} recv={e.get('time_recv')} "
+                    f"ok={e.get('ok')} req={e.get('request')} resp={e.get('response')}"
+                )
+            self.submit_log_view.setPlainText("\n".join(lines))
+        if stats.temp_readable and stats.gpu_temp is not None:
+            extra = " · paused" if stats.paused_thermal else ""
+            self.lbl_temp.setText(f"{stats.gpu_temp}°C{extra}")
+            if not self.chk_allow_no_temp.isChecked():
+                self._refresh_thermal_unsafe_banner(running_without_temp=False)
+        else:
+            if self.controller.allow_mine_without_temp or self.chk_allow_no_temp.isChecked():
+                self.lbl_temp.setText("unreadable · thermal protection OFF (unsafe)")
+                self._refresh_thermal_unsafe_banner(running_without_temp=True)
+            else:
+                self.lbl_temp.setText("unreadable · start blocked unless override")
+                self._refresh_thermal_unsafe_banner(running_without_temp=False)
+        if managed:
+            self.lbl_work.setText(
+                f"External engine · rate={self.lbl_rate.text()} · "
+                f"share accepted={stats.accepted} rejected={stats.rejected} · "
+                f"{(stats.status or '')[:80]}"
+            )
+        elif stats.last_scanned:
+            self.lbl_work.setText(
+                f"scanned={stats.last_scanned:,}   "
+                f"global={stats.last_global:,}  local={stats.last_local}   "
+                f"kernel={stats.last_kernel_ms:.1f}ms   sleep={stats.last_sleep_s * 1000:.0f}ms"
+            )
+        else:
+            self.lbl_work.setText("no kernel yet (connected ≠ hashing)")
+        self.lbl_status.setText(stats.status)
+
+        # Block candidate panel
+        self.lbl_blk_count.setText(str(stats.block_candidate_count))
+        blk = stats.last_block
+        if blk:
+            self.block_alert.setVisible(True)
+            if blk.get("loaded_from_disk"):
+                self.lbl_block_alert_title.setText("Stored block candidate")
+                self.lbl_block_alert_body.setText(
+                    "Historical record loaded from disk. This does not mean a block "
+                    "was just found or submitted to the pool."
+                )
+            else:
+                self.lbl_block_alert_title.setText(
+                    "BLOCK CANDIDATE FOUND" + (" (TEST)" if blk.get("test_mode") else "")
+                )
+                self.lbl_block_alert_body.setText(
+                    f"Candidate submitted to pool / saved. {self._profile.display_name} "
+                    "network shows no earned reward until acceptance. "
+                    "Chain verification is not proof of payment."
+                )
+            self.lbl_blk_time.setText(str(blk.get("time") or "—"))
+            self.lbl_blk_nonce.setText(
+                str(blk.get("nonce_hex") or blk.get("nonce") or "—")
+            )
+            self.lbl_blk_job.setText(str(blk.get("job_id") or "—"))
+            self.lbl_blk_status.setText(str(blk.get("status") or "—"))
+            self.lbl_blk_chain.setText(
+                str(blk.get("chain_status") or blk.get("chain_detail") or "—")
+            )
+            self.lbl_blk_hash.setText(str(blk.get("hash") or "—"))
+            if blk.get("test_mode") and not blk.get("loaded_from_disk"):
+                self.lbl_block_alert_body.setText(
+                    "TEST candidate — no real earnings / chain confirmation."
+                )
+        else:
+            self.block_alert.setVisible(False)
+            self.lbl_blk_time.setText("—")
+            self.lbl_blk_nonce.setText("—")
+            self.lbl_blk_job.setText("—")
+            self.lbl_blk_status.setText("None yet")
+            self.lbl_blk_chain.setText("—")
+            self.lbl_blk_hash.setText("—")
+
+        self.block_list.setPlainText(
+            "\n".join(
+                f"[{b.get('time')}] nonce={b.get('nonce_hex') or b.get('nonce')}  "
+                f"{b.get('hash')}  | {b.get('status')}  | chain={b.get('chain_status')}"
+                for b in stats.block_candidates
+            )
+            or ""
+        )
+
+        # Share panel (pool target; block candidates in separate panel)
+        self.lbl_sh_count.setText(str(stats.share_submit_count))
+        self.lbl_sh_acc.setText(f"{stats.accepted} / {stats.rejected}")
+        sh = stats.last_share
+        if sh:
+            self.lbl_sh_nonce.setText(str(sh.get("nonce_hex") or sh.get("nonce") or "—"))
+            self.lbl_sh_status.setText(str(sh.get("status") or "—"))
+            self.lbl_sh_hash.setText(str(sh.get("hash") or "—"))
+        else:
+            self.lbl_sh_nonce.setText("—")
+            self.lbl_sh_status.setText("None yet")
+            self.lbl_sh_hash.setText("—")
+
+        self.share_list.setPlainText(
+            "\n".join(
+                f"[{s.get('time')}] nonce={s.get('nonce_hex') or s.get('nonce')}  "
+                f"{s.get('hash')}  | {s.get('status')}"
+                for s in stats.share_events
+            )
+        )
+        self.event_log.setPlainText("\n".join(stats.event_log))
+        self._maybe_notify_thermal(stats)
+        self._maybe_notify_block(stats)
+
+    def _setup_tray(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray = None
+            return
+
+        self.tray = QSystemTrayIcon(self)
+        icon = _make_tray_icon()
+        style_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        self.tray.setIcon(icon if not icon.isNull() else style_icon)
+        self.setWindowIcon(self.tray.icon())
+        self.tray.setToolTip(APP_NAME)
+
+        menu = QMenu()
+        act_show = QAction("Show window", self)
+        act_show.triggered.connect(self._show_from_tray)
+        act_hide = QAction("Minimize to tray", self)
+        act_hide.triggered.connect(self.hide)
+        act_quit = QAction("Quit", self)
+        act_quit.triggered.connect(self._quit_app)
+        menu.addAction(act_show)
+        menu.addAction(act_hide)
+        menu.addSeparator()
+        menu.addAction(act_quit)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+        self.tray.showMessage(
+            APP_NAME,
+            "Running in the system tray. Double-click: window. Close = minimize to tray.",
+            QSystemTrayIcon.MessageIcon.Information,
+            4000,
+        )
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+            QSystemTrayIcon.ActivationReason.Trigger,
+        ):
+            self._show_from_tray()
+
+    def raise_to_front(self) -> None:
+        """Show and activate the main window (tray click or second-instance launch)."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _show_from_tray(self) -> None:
+        self.raise_to_front()
+
+    def _notify(self, title: str, body: str, icon=None) -> None:
+        if icon is None:
+            icon = QSystemTrayIcon.MessageIcon.Warning
+        if self.tray is not None and self.tray.isVisible():
+            self.tray.showMessage(title, body, icon, 8000)
+            self.tray.setToolTip(f"{APP_NAME} — {body[:80]}")
+
+    def _maybe_notify_thermal(self, stats: MiningStats) -> None:
+        paused = bool(stats.paused_thermal)
+        if self._last_thermal_paused is None:
+            self._last_thermal_paused = paused
+            return
+        if paused == self._last_thermal_paused:
+            return
+        self._last_thermal_paused = paused
+        temp = stats.gpu_temp
+        if paused:
+            self._notify(
+                f"{APP_NAME} — thermal pause",
+                f"GPU {temp}°C: mining paused "
+                f"(threshold {self.pause_temp.value()}°C). Resumes automatically when cooler.",
+                QSystemTrayIcon.MessageIcon.Warning,
+            )
+        else:
+            self._notify(
+                f"{APP_NAME} — resumed",
+                f"GPU {temp}°C: cooled down, mining restarted "
+                f"(resume ≤ {self.resume_temp.value()}°C).",
+                QSystemTrayIcon.MessageIcon.Information,
+            )
+
+    def _maybe_notify_block(self, stats: MiningStats) -> None:
+        blk = stats.last_block
+        if not blk:
+            return
+        key = (
+            f"{blk.get('job_id')}|{blk.get('nonce_hex') or blk.get('nonce')}|"
+            f"{blk.get('hash')}|{blk.get('time')}"
+        )
+        if key == self._last_block_notify_key:
+            return
+        # Disk history — lock key, no tray "just found" notification
+        if blk.get("loaded_from_disk"):
+            self._last_block_notify_key = key
+            return
+        self._last_block_notify_key = key
+        nonce = blk.get("nonce_hex") or blk.get("nonce") or "?"
+        digest = str(blk.get("hash") or "")
+        digest_short = f"{digest[:20]}…" if len(digest) > 20 else (digest or "—")
+        test = " (TEST — not a payout)" if blk.get("test_mode") else ""
+        self._notify(
+            f"{APP_NAME} — BLOCK CANDIDATE{test}",
+            f"nonce={nonce}  hash={digest_short}  "
+            "Not a payout until accepted on the network.",
+            QSystemTrayIcon.MessageIcon.Critical,
+        )
+
+    def _quit_app(self) -> None:
+        self._persist_form()
+        if self._stop_busy:
+            return
+
+        def _after(ok: bool) -> None:
+            if not ok:
+                QMessageBox.warning(
+                    self,
+                    "Could not stop",
+                    "External miner / thread did not exit. Quit canceled — try Stop again.",
+                )
+                self._pending_quit = False
+                self._tray_exit = False
+                self.stop_btn.setEnabled(True)
+                return
+            self._tray_exit = True
+            if self.tray is not None:
+                self.tray.hide()
+            QApplication.instance().quit()
+
+        self._pending_quit = True
+        # orphan xmrig may remain even if UI says stopped
+        try:
+            from engines.orphan_miners import list_app_xmrig
+
+            orphans = list_app_xmrig()
+        except Exception:
+            orphans = []
+        if (
+            not self.controller.is_running()
+            and not self.controller._stop_failed
+            and not orphans
+        ):
+            _after(True)
+            return
+        self._begin_async_stop(_after)
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        # stay in tray when minimized from taskbar
+        if event.type() == QEvent.Type.WindowStateChange and self.isMinimized():
+            if self.tray is not None and self.tray.isVisible():
+                QTimer.singleShot(0, self.hide)
+        super().changeEvent(event)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._persist_form()
+        if self._tray_exit or self.tray is None:
+            if self._stop_busy:
+                event.ignore()
+                return
+            try:
+                from engines.orphan_miners import list_app_xmrig
+
+                orphans = list_app_xmrig()
+            except Exception:
+                orphans = []
+            if (
+                self.controller.is_running()
+                or self.controller._stop_failed
+                or orphans
+            ):
+                event.ignore()
+
+                def _after(ok: bool) -> None:
+                    if not ok:
+                        QMessageBox.warning(
+                            self,
+                            "Could not stop",
+                            "External miner / thread did not exit. Window close ignored.",
+                        )
+                        self._tray_exit = False
+                        self.stop_btn.setEnabled(True)
+                        return
+                    self._tray_exit = True
+                    if self.tray is not None:
+                        self.tray.hide()
+                    self.close()
+
+                self._begin_async_stop(_after)
+                return
+            if self.tray is not None:
+                self.tray.hide()
+            event.accept()
+            return
+        # X = minimize to tray, not quit
+        event.ignore()
+        self.hide()
+        if self.tray is not None:
+            self.tray.showMessage(
+                APP_NAME,
+                "Running in background. Double-click to open; tray menu → Quit to exit.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3500,
+            )

@@ -1,0 +1,50 @@
+# Local / runtime
+.deps_ok
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & scratch from agent/dev sessions
+_*.txt
+*_bulk*.txt
+*_tr_lines.txt
+*.json.bak
+verification_report.json
+
+# Internal planning / local-only (not for GitHub)
+docs/
+tools/
+eksikler.md
+project.md
+_local_backup/
+*.local.md
+
+# Downloaded miners / large binaries (never ship)
+**/miners/
+*.exe
+!scripts/*.ps1
+
+# Cursor / agent caches (if present under project)
+.cursor/
+agent-transcripts/
