@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 
 from app_meta import APP_NAME, APP_VERSION_LABEL, load_app_logo_pixmap
 from networks.profiles import NetworkProfile, list_profiles
+from ui.busy_indicator import BusyIndicator
 
 
 def _short_block_reason(block: str) -> str:
@@ -112,6 +113,9 @@ class NetworkSelectPage(QWidget):
         self._hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         layout.addWidget(self._hint)
 
+        self._busy = BusyIndicator()
+        layout.addWidget(self._busy)
+
         self.btn_continue = QPushButton("Continue")
         self.btn_continue.setObjectName("startBtn")
         self.btn_continue.clicked.connect(self._emit_choice)
@@ -121,6 +125,8 @@ class NetworkSelectPage(QWidget):
         self.btn_hardware.clicked.connect(self.hardware_check_clicked.emit)
         self.btn_hardware.setVisible(show_hardware_button)
         layout.addWidget(self.btn_hardware)
+
+        self._page_busy = False
 
         self._apply_default_selection()
         self._refresh_hint()
@@ -134,14 +140,21 @@ class NetworkSelectPage(QWidget):
         self._refresh_hint()
 
     def set_busy(self, busy: bool, message: str = "") -> None:
+        self._page_busy = busy
+        if busy:
+            self._busy.show_busy(message or "Checking GPU capacity…")
+            self._hint.setText(message or "Checking GPU capacity…")
+        else:
+            self._busy.hide_busy()
+            if message:
+                self._hint.setText(message)
         self.btn_continue.setEnabled(
             not busy and not self._blocked.get(self._selected_id())
         )
         self.btn_hardware.setEnabled(not busy)
-        if busy:
-            self._hint.setText(message or "Checking GPU capacity…")
-        elif not busy and message:
-            self._hint.setText(message)
+        for radio in self._radios.values():
+            nid = str(radio.property("network_id") or "")
+            radio.setEnabled(not busy and not self._blocked.get(nid))
 
     def _rebuild_rows(self) -> None:
         while self._panel_layout.count():
@@ -245,6 +258,8 @@ class NetworkSelectPage(QWidget):
             )
 
     def _emit_choice(self) -> None:
+        if self._page_busy:
+            return
         nid = self._selected_id()
         if self._blocked.get(nid):
             return

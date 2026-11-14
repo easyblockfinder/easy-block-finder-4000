@@ -16,6 +16,14 @@ from app_meta import XMRIG_HTTP_PORT, XMRIG_ORPHAN_TOKENS
 log = logging.getLogger(__name__)
 
 
+def _no_window_kwargs() -> dict:
+    """Hide PowerShell / taskkill / tasklist consoles on Windows."""
+    if sys.platform != "win32":
+        return {}
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    return {"creationflags": flags}
+
+
 @dataclass
 class OrphanHit:
     pid: int
@@ -39,10 +47,18 @@ def list_app_xmrig() -> list[OrphanHit]:
     )
     try:
         raw = subprocess.check_output(
-            ["powershell", "-NoProfile", "-Command", ps],
+            [
+                "powershell",
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                ps,
+            ],
             text=True,
             timeout=15,
             stderr=subprocess.DEVNULL,
+            **_no_window_kwargs(),
         ).strip()
     except Exception:
         log.exception("orphan xmrig list")
@@ -84,6 +100,7 @@ def kill_pids(pids: list[int], *, timeout_s: float = 5.0) -> list[int]:
                     timeout=timeout_s,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    **_no_window_kwargs(),
                 )
             else:
                 os.kill(pid, 15)
@@ -98,6 +115,7 @@ def kill_pids(pids: list[int], *, timeout_s: float = 5.0) -> list[int]:
                     capture_output=True,
                     text=True,
                     timeout=5,
+                    **_no_window_kwargs(),
                 )
                 if str(pid) in (r.stdout or ""):
                     failed.append(pid)
@@ -140,10 +158,18 @@ def list_app_rigel() -> list[OrphanHit]:
     )
     try:
         raw = subprocess.check_output(
-            ["powershell", "-NoProfile", "-Command", ps],
+            [
+                "powershell",
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                ps,
+            ],
             text=True,
             timeout=15,
             stderr=subprocess.DEVNULL,
+            **_no_window_kwargs(),
         ).strip()
     except Exception:
         log.exception("orphan rigel list")

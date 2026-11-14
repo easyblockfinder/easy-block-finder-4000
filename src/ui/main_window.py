@@ -56,6 +56,21 @@ class _StopWorker(QThread):
         ok = self._controller.stop()
         self.finished_ok.emit(bool(ok))
 
+
+class _IdlePrepWorker(QThread):
+    """Kill leftover miners off the UI thread (PowerShell must not freeze Continue)."""
+
+    finished_ok = pyqtSignal()
+
+    def run(self) -> None:  # noqa: N802
+        try:
+            from engines.orphan_miners import kill_app_miners
+
+            kill_app_miners()
+        except Exception:
+            pass
+        self.finished_ok.emit()
+
 APP_QSS = """
 QMainWindow, QScrollArea, QWidget#root {
     background: #eef1f4;
@@ -265,7 +280,8 @@ class MainWindow(QMainWindow):
         self._miner_dl_dialog = None
         self._after_miner_download = None  # optional Callable[[], None]
         self._capacity_worker = None
-        self._capacity_blocks: dict[str, str] = {}
+        self._idle_prep_worker: _IdlePrepWorker | None = None
+        self._capacity_blocks = self._load_capacity_blocks()
 
         self._build_menu()
 
@@ -754,9 +770,10 @@ class MainWindow(QMainWindow):
 
         self._setup_tray()
         self._apply_network_to_ui()
-        self._ensure_idle_on_launch()
+        self._apply_idle_mining_ui()
         # Always open on network selection (never auto-resume mining / last mine page)
         self._stack.setCurrentIndex(0)
+        QTimer.singleShot(50, self._startup_clear_orphans)
         QTimer.singleShot(400, self._maybe_offer_missing_miners)
         QTimer.singleShot(2500, lambda: self._check_for_updates(manual=False))
 
@@ -782,8 +799,30 @@ class MainWindow(QMainWindow):
 
         FeedbackDialog(self).exec()
 
+    def _load_capacity_blocks(self) -> dict[str, str]:
+        """Restore last successful hardware capacity probe from settings."""
+        raw = self._cfg.get("capacity_blocks") or {}
+        out: dict[str, str] = {}
+        if isinstance(raw, dict):
+            for nid, reason in raw.items():
+                if reason:
+                    out[normalize_network_id(str(nid))] = str(reason)
+        return out
+
+    def _persist_capacity_blocks(self, blocks: dict[str, str]) -> None:
+        import time
+
+        save_settings(
+            {
+                "capacity_blocks": dict(blocks),
+                "capacity_check_ts": time.time(),
+            }
+        )
+        self._cfg["capacity_blocks"] = dict(blocks)
+        self._cfg["capacity_check_ts"] = time.time()
+
     def _network_blocked_map(self) -> dict[str, str]:
-        """Merge light gates + last capacity probe results."""
+        """Merge light gates + last capacity probe results (persisted)."""
         out: dict[str, str] = {}
         for prof in list_profiles():
             reason = network_block_reason(prof.id, probe_gpu=False)
@@ -794,14 +833,8 @@ class MainWindow(QMainWindow):
                 out[nid] = reason
         return out
 
-    def _ensure_idle_on_launch(self) -> None:
-        """Never resume mining after restart; clear leftover external miners."""
-        try:
-            from engines.orphan_miners import kill_app_miners
-
-            kill_app_miners()
-        except Exception:
-            pass
+    def _apply_idle_mining_ui(self) -> None:
+        """Reset mining-page controls to idle (no auto-start)."""
         self.start_btn.setEnabled(bool(self._profile.mining_ready))
         self.stop_btn.setEnabled(False)
         self.address_edit.setEnabled(True)
@@ -811,54 +844,94 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("Ready — choose Start after selecting a network.")
         self.lbl_rate.setText("0 H/s")
 
+    def _ensure_idle_on_launch(self) -> None:
+        """Never resume mining after restart; clear leftover external miners."""
+        try:
+            from engines.orphan_miners import kill_app_miners
+
+            kill_app_miners()
+        except Exception:
+            pass
+        self._apply_idle_mining_ui()
+
+    def _startup_clear_orphans(self) -> None:
+        """Background orphan clear at launch — spinner on network page, no CMD flash."""
+        if self._idle_prep_worker is not None and self._idle_prep_worker.isRunning():
+            return
+        self._select_page.set_busy(
+            True, "Starting up… Clearing leftover miners. Please wait."
+        )
+        worker = _IdlePrepWorker(parent=self)
+        self._idle_prep_worker = worker
+
+        def _done() -> None:
+            self._select_page.set_busy(False)
+            self._apply_idle_mining_ui()
+            worker.deleteLater()
+            if self._idle_prep_worker is worker:
+                self._idle_prep_worker = None
+
+        worker.finished_ok.connect(_done)
+        worker.start()
+
     def _on_open_hardware_check(self) -> None:
-        self._hw_page.refresh()
         self._stack.setCurrentIndex(1)
+        # refresh() shows spinner and scans off the UI thread
+        self._hw_page.refresh()
 
     def _on_hardware_back_to_network(self) -> None:
         self._stack.setCurrentIndex(0)
 
     def _on_hardware_continue(self) -> None:
-        """Optional hardware page → capacity probe → network list."""
-        from ui.capacity_worker import CapacityProbeWorker
+        """Stay on hardware page with spinner → capacity probe → network list."""
+        from PyQt6.QtCore import QTimer
 
-        self._stack.setCurrentIndex(0)
-        self._select_page.set_busy(
-            True,
-            "Checking GPU capacity (OpenCL / NVIDIA VRAM, KawPoW & Autolykos2)…",
-        )
+        from ui.capacity_worker import CapacityProbeWorker
 
         if self._capacity_worker is not None and self._capacity_worker.isRunning():
             return
 
-        worker = CapacityProbeWorker(parent=self)
-        self._capacity_worker = worker
+        msg = "Checking GPU capacity (OpenCL / NVIDIA VRAM, KawPoW & Autolykos2)…"
+        self._hw_page.set_busy(True, msg)
 
-        def _ok(blocks: object) -> None:
-            mapped: dict[str, str] = {}
-            if isinstance(blocks, dict):
-                for k, v in blocks.items():
-                    if v:
-                        mapped[str(k)] = str(v)
-            self._capacity_blocks = mapped
-            self._select_page.apply_blocks(self._network_blocked_map())
-            disabled = [k.upper() for k in mapped]
-            msg = (
-                "Capacity check done. Disabled: " + ", ".join(disabled)
-                if disabled
-                else "Capacity check done — all probed networks look usable."
-            )
-            self._select_page.set_busy(False, msg)
+        def _start() -> None:
+            worker = CapacityProbeWorker(parent=self)
+            self._capacity_worker = worker
 
-        def _fail(err: str) -> None:
-            self._select_page.set_busy(
-                False,
-                f"Capacity check failed: {err}. GPU networks may stay limited until you retry.",
-            )
+            def _ok(blocks: object) -> None:
+                mapped: dict[str, str] = {}
+                if isinstance(blocks, dict):
+                    for k, v in blocks.items():
+                        if v:
+                            mapped[normalize_network_id(str(k))] = str(v)
+                self._capacity_blocks = mapped
+                self._persist_capacity_blocks(mapped)
+                self._hw_page.set_busy(False)
+                self._select_page.apply_blocks(self._network_blocked_map())
+                disabled = [k.upper() for k in mapped]
+                done = (
+                    "Capacity check done. Disabled: " + ", ".join(disabled)
+                    if disabled
+                    else "Capacity check done — all probed networks look usable."
+                )
+                self._stack.setCurrentIndex(0)
+                self._select_page.set_busy(False, done)
 
-        worker.finished_ok.connect(_ok)
-        worker.failed.connect(_fail)
-        worker.start()
+            def _fail(err: str) -> None:
+                self._hw_page.set_busy(False)
+                self._select_page.apply_blocks(self._network_blocked_map())
+                self._stack.setCurrentIndex(0)
+                self._select_page.set_busy(
+                    False,
+                    f"Capacity check failed: {err}. Keeping last hardware configuration.",
+                )
+
+            worker.finished_ok.connect(_ok)
+            worker.failed.connect(_fail)
+            worker.start()
+
+        # Let the spinner paint before the worker / GPU probes start
+        QTimer.singleShot(40, _start)
 
     def _check_for_updates(self, *, manual: bool) -> None:
         import time
@@ -1104,11 +1177,36 @@ class MainWindow(QMainWindow):
             self._stats_url = ""
 
     def _on_network_chosen(self, network_id: str) -> None:
-        if not self._switch_network(network_id):
+        """Continue → show circle spinner, clear orphans in background, then mining UI."""
+        if self._idle_prep_worker is not None and self._idle_prep_worker.isRunning():
             return
-        # Idle mining page — user must press Start (no auto-resume)
-        self._ensure_idle_on_launch()
-        self._stack.setCurrentWidget(self._mine_scroll)
+
+        self._select_page.set_busy(
+            True,
+            "Preparing mining screen… Clearing leftover miners. Please wait.",
+        )
+
+        def _start_prep() -> None:
+            worker = _IdlePrepWorker(parent=self)
+            self._idle_prep_worker = worker
+
+            def _done() -> None:
+                try:
+                    if not self._switch_network(network_id):
+                        return
+                    self._apply_idle_mining_ui()
+                    self._stack.setCurrentWidget(self._mine_scroll)
+                finally:
+                    self._select_page.set_busy(False)
+                    worker.deleteLater()
+                    if self._idle_prep_worker is worker:
+                        self._idle_prep_worker = None
+
+            worker.finished_ok.connect(_done)
+            worker.start()
+
+        # Paint spinner before PowerShell / orphan scan starts
+        QTimer.singleShot(40, _start_prep)
 
     def _on_pick_gpu(self) -> None:
         try:
@@ -1170,7 +1268,7 @@ class MainWindow(QMainWindow):
     def _on_change_network(self) -> None:
         if not self._ensure_stopped_for_network_switch():
             return
-        self._capacity_blocks = {}
+        # Keep last capacity_blocks (persisted) — do not re-enable disabled nets
         self._select_page.apply_blocks(self._network_blocked_map())
         self._stack.setCurrentIndex(0)
 

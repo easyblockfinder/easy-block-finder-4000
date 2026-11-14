@@ -54,6 +54,9 @@ DEFAULTS: dict[str, Any] = {
     "gpu_uuid": None,
     "xmrig_donate_level": 1,
     "app_donation": default_app_donation(),
+    # Last hardware / GPU capacity probe: network_id -> block reason (empty = all clear)
+    "capacity_blocks": {},
+    "capacity_check_ts": 0.0,
 }
 
 
@@ -66,9 +69,19 @@ def _normalize_loaded(data: dict[str, Any]) -> dict[str, Any]:
             for nid in NETWORK_ORDER:
                 if nid in v and isinstance(v[nid], str):
                     out["address_by_network"][nid] = v[nid]
+        elif k == "capacity_blocks" and isinstance(v, dict):
+            cleaned: dict[str, str] = {}
+            for nid, reason in v.items():
+                if reason:
+                    cleaned[normalize_network_id(str(nid))] = str(reason)
+            out["capacity_blocks"] = cleaned
         elif k == "app_donation":
             out["app_donation"] = normalize_app_donation(v)
-        elif k in DEFAULTS and k not in ("address_by_network", "app_donation"):
+        elif k in DEFAULTS and k not in (
+            "address_by_network",
+            "app_donation",
+            "capacity_blocks",
+        ):
             out[k] = v
     out["selected_network"] = normalize_network_id(str(out.get("selected_network") or "btc"))
     # Migrate legacy single 'address' field into btc
@@ -123,6 +136,15 @@ def save_settings(updates: dict[str, Any]) -> None:
         merged.update(updates["address_by_network"])
         data["address_by_network"] = merged
         updates = {k: v for k, v in updates.items() if k != "address_by_network"}
+    if "capacity_blocks" in updates:
+        cleaned: dict[str, str] = {}
+        raw = updates.get("capacity_blocks")
+        if isinstance(raw, dict):
+            for nid, reason in raw.items():
+                if reason:
+                    cleaned[normalize_network_id(str(nid))] = str(reason)
+        data["capacity_blocks"] = cleaned
+        updates = {k: v for k, v in updates.items() if k != "capacity_blocks"}
     if "app_donation" in updates:
         data["app_donation"] = normalize_app_donation(updates["app_donation"])
         updates = {k: v for k, v in updates.items() if k != "app_donation"}

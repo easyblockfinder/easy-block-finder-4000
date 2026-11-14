@@ -1,8 +1,8 @@
-"""First wizard page: CPU / GPU detection status."""
+"""Optional wizard page: CPU / GPU detection status + capacity handoff."""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QFrame,
@@ -14,10 +14,22 @@ from PyQt6.QtWidgets import (
 
 from app_meta import APP_NAME, APP_VERSION_LABEL, load_app_logo_pixmap
 from monitor.hardware_report import HardwareReport, build_hardware_report
+from ui.busy_indicator import BusyIndicator
 
 
 def _status_word(ok: bool) -> str:
     return "DETECTED" if ok else "NOT DETECTED"
+
+
+class _DetectWorker(QThread):
+    finished_ok = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def run(self) -> None:
+        try:
+            self.finished_ok.emit(build_hardware_report(include_vram=False))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class HardwareDetectPage(QWidget):
@@ -28,6 +40,8 @@ class HardwareDetectPage(QWidget):
         super().__init__(parent)
         self.setObjectName("root")
         self._report: HardwareReport | None = None
+        self._detect_worker: _DetectWorker | None = None
+        self._busy_locked = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -58,6 +72,9 @@ class HardwareDetectPage(QWidget):
         sub.setWordWrap(True)
         layout.addWidget(sub)
 
+        self._busy = BusyIndicator()
+        layout.addWidget(self._busy)
+
         self.panel = QFrame()
         self.panel.setObjectName("panel")
         self._panel_layout = QVBoxLayout(self.panel)
@@ -76,7 +93,7 @@ class HardwareDetectPage(QWidget):
 
         self.btn_continue = QPushButton("Run capacity check — back to network list")
         self.btn_continue.setObjectName("startBtn")
-        self.btn_continue.clicked.connect(self.continue_clicked.emit)
+        self.btn_continue.clicked.connect(self._on_continue)
         layout.addWidget(self.btn_continue)
 
         self.btn_skip = QPushButton("← Back to network list")
@@ -89,15 +106,61 @@ class HardwareDetectPage(QWidget):
     def report(self) -> HardwareReport | None:
         return self._report
 
+    def set_busy(self, busy: bool, message: str = "") -> None:
+        """Lock page + show spinner (capacity check or detect scan)."""
+        self._busy_locked = busy
+        if busy:
+            self._busy.show_busy(message or "Please wait…")
+        else:
+            self._busy.hide_busy()
+            if message:
+                self.lbl_summary.setText(message)
+        self._set_actions_enabled(not busy)
+
+    def _set_actions_enabled(self, enabled: bool) -> None:
+        self.btn_rescan.setEnabled(enabled)
+        self.btn_continue.setEnabled(enabled)
+        self.btn_skip.setEnabled(enabled)
+
+    def _on_continue(self) -> None:
+        if self._busy_locked:
+            return
+        self.continue_clicked.emit()
+
     def refresh(self) -> None:
+        if self._detect_worker is not None and self._detect_worker.isRunning():
+            return
+        self.set_busy(True, "Scanning CPU / GPU (OpenCL & NVIDIA)…")
         while self._panel_layout.count():
             item = self._panel_layout.takeAt(0)
             w = item.widget()
             if w is not None:
                 w.deleteLater()
+        self.lbl_summary.setText("Detecting hardware…")
 
-        self._report = build_hardware_report(include_vram=False)
-        r = self._report
+        worker = _DetectWorker(parent=self)
+        self._detect_worker = worker
+
+        def _ok(report: object) -> None:
+            if isinstance(report, HardwareReport):
+                self._apply_report(report)
+            self.set_busy(False)
+
+        def _fail(err: str) -> None:
+            self.lbl_summary.setText(f"Hardware scan failed: {err}")
+            self.set_busy(False)
+
+        worker.finished_ok.connect(_ok)
+        worker.failed.connect(_fail)
+        worker.start()
+
+    def _apply_report(self, r: HardwareReport) -> None:
+        self._report = r
+        while self._panel_layout.count():
+            item = self._panel_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
 
         self._panel_layout.addWidget(
             self._section(
@@ -130,20 +193,20 @@ class HardwareDetectPage(QWidget):
         )
 
         disabled = [nid.upper() for nid, reason in r.network_blocks.items() if reason]
-        if disabled:
-            self.lbl_summary.setText(
-                "Currently unavailable from detection alone: "
-                + ", ".join(disabled)
-                + ". Next screen also checks GPU VRAM capacity for KawPoW / Autolykos2."
-            )
-        else:
-            self.lbl_summary.setText(
-                "CPU and GPU probes look usable. Next screen verifies VRAM capacity "
-                "for Ravencoin / Ergo."
-            )
         if r.deps_mode == "cpu-only":
             self.lbl_summary.setText(
                 "This session is CPU-only (start.bat cpu). Only XMR can be selected."
+            )
+        elif disabled:
+            self.lbl_summary.setText(
+                "Currently unavailable from detection alone: "
+                + ", ".join(disabled)
+                + ". Next step also checks GPU VRAM capacity for KawPoW / Autolykos2."
+            )
+        else:
+            self.lbl_summary.setText(
+                "CPU and GPU probes look usable. Next step verifies VRAM capacity "
+                "for Ravencoin / Ergo."
             )
 
     def _section(
