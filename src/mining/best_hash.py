@@ -53,3 +53,24 @@ def pick_best_candidate_hex(candidates: list[str]) -> str | None:
             best_int = value
             best_hex = raw.strip().lower()
     return best_hex
+
+
+def format_diff_short(v: float | None) -> str:
+    """Compact difficulty: 95.2T, 12.4k, 3.50."""
+    if v is None:
+        return "\u2014"
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return "\u2014"
+    if x != x or x < 0:
+        return "\u2014"
+    for suffix, scale in (("P", 1e15), ("T", 1e12), ("G", 1e9), ("M", 1e6), ("k", 1e3)):
+        if x >= scale:
+            y = x / scale
+            return f"{y:.0f}{suffix}" if y >= 100 else f"{y:.1f}{suffix}"
+    if x >= 100:
+        return f"{x:.0f}"
+    if x >= 10:
+        return f"{x:.1f}"
+    return f"{x:.2f}"

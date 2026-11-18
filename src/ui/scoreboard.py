@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QPoint, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from mining.best_hash import format_diff_short
 from ui.casio_digits import CasioDigitRow
 
 _BOARD_QSS = """
@@ -31,6 +32,12 @@ QFrame#casioBox {
 QLabel#casioTitle {
     color: #ff6b5a;
     font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+QLabel#diffSummary {
+    color: #b0b0b0;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 1px;
 }
@@ -59,6 +66,18 @@ QFrame#overlayShell {
 }
 """
 
+_CELEBRATE_QSS = """
+QFrame#casioBox {
+    background: #06210f;
+    border: 1px solid #00e676;
+}
+QLabel#diffSummary {
+    color: #00e676;
+}
+"""
+
+_CELEBRATE_MS = 1600
+
 
 class ScoreboardWidget(QFrame):
     """Scoreboard: BLK / ACC / REJ / ATTEMPTS / TEMP (compact: attempts+temp on 2nd row)."""
@@ -84,6 +103,12 @@ class ScoreboardWidget(QFrame):
         self.temp = CasioDigitRow("TEMP", 3, compact=compact)
         self.temp.set_text("--")
 
+        self.diff_summary = QLabel("")
+        self.diff_summary.setObjectName("diffSummary")
+        self.diff_summary.setVisible(False)
+        self._celebrate_timer: QTimer | None = None
+        self._summary_text = ""
+
         if compact:
             # Mini overlay: top = BLK/ACC/REJ, bottom = ATTEMPTS + TEMP
             root = QVBoxLayout(self)
@@ -103,8 +128,12 @@ class ScoreboardWidget(QFrame):
             bottom.addWidget(self.temp, 0)
             bottom.addStretch(1)
             root.addLayout(bottom)
+            root.addWidget(self.diff_summary)
         else:
-            root = QHBoxLayout(self)
+            outer = QVBoxLayout(self)
+            outer.setContentsMargins(0, 0, 0, 0)
+            outer.setSpacing(4)
+            root = QHBoxLayout()
             root.setContentsMargins(0, 0, 0, 0)
             root.setSpacing(6)
             root.addWidget(self.blk)
@@ -113,6 +142,8 @@ class ScoreboardWidget(QFrame):
             root.addWidget(self.att, 0)
             root.addWidget(self.temp, 0)
             root.addStretch(1)
+            outer.addLayout(root)
+            outer.addWidget(self.diff_summary)
 
     def update_counts(
         self,
@@ -143,7 +174,45 @@ class ScoreboardWidget(QFrame):
             return
         self.temp.set_value(min(999, val))
 
+    def set_difficulty_row(
+        self,
+        network_diff: float | None,
+        best_diff: float | None,
+        *,
+        visible: bool,
+    ) -> None:
+        self._summary_text = (
+            f"NET {format_diff_short(network_diff)}   BEST {format_diff_short(best_diff)}"
+        )
+        if not visible:
+            self._end_celebration()
+        self.diff_summary.setVisible(bool(visible))
+        if visible and self._celebrate_timer is None:
+            self.diff_summary.setText(self._summary_text)
+
+    def celebrate_record(self) -> None:
+        """Flash green + NEW RECORD for ~1.6s."""
+        if not self.diff_summary.isVisible():
+            return
+        self.setStyleSheet(_BOARD_QSS + _CELEBRATE_QSS)
+        self.diff_summary.setText(f"NEW RECORD   {self._summary_text}")
+        if self._celebrate_timer is None:
+            self._celebrate_timer = QTimer(self)
+            self._celebrate_timer.setSingleShot(True)
+            self._celebrate_timer.timeout.connect(self._end_celebration)
+        self._celebrate_timer.start(_CELEBRATE_MS)
+
+    def _end_celebration(self) -> None:
+        if self._celebrate_timer is not None:
+            self._celebrate_timer.stop()
+            self._celebrate_timer.deleteLater()
+            self._celebrate_timer = None
+        self.setStyleSheet(_BOARD_QSS)
+        self.diff_summary.setText(self._summary_text)
+
     def stop_alerts(self) -> None:
+        if self._celebrate_timer is not None:
+            self._end_celebration()
         for row in (self.blk, self.acc, self.rej, self.att, self.temp):
             row.stop_alerts()
 
@@ -224,6 +293,21 @@ class ScoreboardOverlayWindow(QWidget):
         self.adjustSize()
         if self.isVisible():
             self.place_bottom_right()
+
+    def set_difficulty_row(
+        self,
+        network_diff: float | None,
+        best_diff: float | None,
+        *,
+        visible: bool,
+    ) -> None:
+        self.board.set_difficulty_row(network_diff, best_diff, visible=visible)
+        self.adjustSize()
+        if self.isVisible():
+            self.place_bottom_right()
+
+    def celebrate_record(self) -> None:
+        self.board.celebrate_record()
 
     def place_bottom_right(self, margin: int = 12) -> None:
         screen = self.screen() or QApplication.primaryScreen()

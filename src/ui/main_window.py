@@ -44,6 +44,8 @@ from ui.busy_indicator import BusyIndicator
 from ui.donate_dialog import DonateDialog
 from ui.hardware_detect_page import HardwareDetectPage
 from ui.network_select import NetworkSelectPage
+from mining.best_hash import SUPPORTED_BEST_HASH_NETWORKS
+from mining.best_hash_store import load_best_hash_state
 from ui.scoreboard import ScoreboardOverlayWindow, ScoreboardWidget
 from ui.settings_dialog import SettingsDialog
 from ui.settings_store import load_settings, save_settings, settings_file
@@ -360,6 +362,8 @@ class MainWindow(QMainWindow):
         self._capacity_blocks = self._load_capacity_blocks()
         self._last_scoreboard = (0, 0, 0, 0)  # blocks, accepted, rejected, attempts
         self._last_scoreboard_temp: int | None = None
+        self._last_net_diff: float | None = None
+        self._last_best_diff: float | None = None
         self._scoreboard_overlay: ScoreboardOverlayWindow | None = None
         self._quit_busy_host: QWidget | None = None
         self._quit_busy: BusyIndicator | None = None
@@ -817,6 +821,7 @@ class MainWindow(QMainWindow):
 
         self._setup_tray()
         self._apply_network_to_ui()
+        self._load_stored_best_into_row()
         self._apply_idle_mining_ui()
         if not bool(self._cfg.get("setup_wizard_done")):
             self._stack.setCurrentWidget(self._setup_wizard)
@@ -1405,6 +1410,7 @@ class MainWindow(QMainWindow):
         save_settings({"selected_network": self._network_id})
         self._cfg = load_settings()
         self._apply_network_to_ui()
+        self._load_stored_best_into_row()
         return True
 
     def _open_ckpool_stats(self) -> None:
@@ -1879,6 +1885,7 @@ class MainWindow(QMainWindow):
             int(stats.rejected or 0),
             int(stats.total_hashes or 0),
         )
+        self._apply_best_stats(stats)
         self.lbl_engine_fee.setText(
             f"Engine fee shares (not user accepted): {getattr(stats, 'engine_fee_shares', 0)}"
         )
@@ -2139,6 +2146,44 @@ class MainWindow(QMainWindow):
         if self._scoreboard_overlay is not None:
             self._scoreboard_overlay.update_counts(blocks, accepted, rejected, attempts)
 
+    def _difficulty_row_visible(self) -> bool:
+        return self._network_id in SUPPORTED_BEST_HASH_NETWORKS
+
+    def _push_difficulty_row(self) -> None:
+        vis = self._difficulty_row_visible()
+        net, best = self._last_net_diff, self._last_best_diff
+        self.scoreboard.set_difficulty_row(net, best, visible=vis)
+        if self._scoreboard_overlay is not None:
+            self._scoreboard_overlay.set_difficulty_row(net, best, visible=vis)
+
+    def _load_stored_best_into_row(self) -> None:
+        """Idle startup / network switch: show stored best for current network."""
+        self._last_net_diff = None
+        self._last_best_diff = None
+        if self._difficulty_row_visible():
+            try:
+                rec = load_best_hash_state()["records"].get(self._network_id)
+            except Exception:
+                rec = None
+            if rec is not None:
+                self._last_best_diff = rec.difficulty
+                self._last_net_diff = rec.network_difficulty_at_time
+        self._push_difficulty_row()
+
+    def _apply_best_stats(self, stats: MiningStats) -> None:
+        if self._difficulty_row_visible():
+            net = getattr(stats, "network_difficulty", None)
+            best = getattr(stats, "best_difficulty", None)
+            if net is not None:
+                self._last_net_diff = net
+            if best is not None:
+                self._last_best_diff = best
+        self._push_difficulty_row()
+        if getattr(stats, "best_record_broken", False) and self._difficulty_row_visible():
+            self.scoreboard.celebrate_record()
+            if self._scoreboard_overlay is not None:
+                self._scoreboard_overlay.celebrate_record()
+
     def _update_scoreboard_temp(self, temp_c: int | None) -> None:
         self._last_scoreboard_temp = temp_c
         self.scoreboard.update_temp(temp_c)
@@ -2155,6 +2200,11 @@ class MainWindow(QMainWindow):
         b, a, r, t = self._last_scoreboard
         self._scoreboard_overlay.update_counts(b, a, r, t)
         self._scoreboard_overlay.update_temp(self._last_scoreboard_temp)
+        self._scoreboard_overlay.set_difficulty_row(
+            self._last_net_diff,
+            self._last_best_diff,
+            visible=self._difficulty_row_visible(),
+        )
         self._scoreboard_overlay.show_overlay()
         self._refresh_scoreboard_tray_action()
 

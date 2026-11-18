@@ -61,3 +61,13 @@ def test_pick_best_candidate_hex():
     assert pick_best_candidate_hex([hi, lo, "zz", ""]) == lo
     assert pick_best_candidate_hex([]) is None
     assert pick_best_candidate_hex(["bad", "00" * 32]) is None
+
+
+def test_format_diff_short():
+    from mining.best_hash import format_diff_short
+
+    assert format_diff_short(None) == "\u2014"
+    assert format_diff_short(95.2e12) == "95.2T"
+    assert format_diff_short(12_400) == "12.4k"
+    assert format_diff_short(3.5) == "3.50"
+    assert format_diff_short(1.5e15) == "1.5P"
