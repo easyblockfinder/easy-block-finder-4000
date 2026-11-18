@@ -19,6 +19,14 @@ from mining.best_hash import (
 DEFAULT_MODE = "gpu_batch"
 
 
+class BestHashLoadError(Exception):
+    """Store exists but could not be read/parsed. Never treat as empty (would overwrite)."""
+
+    def __init__(self, message: str, *, corrupt: bool) -> None:
+        super().__init__(message)
+        self.corrupt = corrupt  # True: unparseable content; False: transient I/O
+
+
 @dataclass
 class BestHashRecord:
     hash_be_hex: str
@@ -56,16 +64,40 @@ def _record_from_dict(raw: dict[str, Any]) -> BestHashRecord | None:
         return None
 
 
-def load_best_hash_state() -> dict:
+def quarantine_corrupt_store() -> Path | None:
+    """Rename an unparseable store to .bak so a fresh one can be written. Best-effort."""
     path = _store_path()
     if not path.is_file():
-        return {"mode": DEFAULT_MODE, "records": {}}
+        return None
+    bak = path.with_suffix(".json.bak")
+    try:
+        bak.unlink(missing_ok=True)
+        path.replace(bak)
+    except OSError:
+        return None
+    return bak
+
+
+def load_best_hash_state(*, strict: bool = False) -> dict:
+    """strict=True raises BestHashLoadError on read/parse failure instead of returning empty."""
+    path = _store_path()
+    empty = {"mode": DEFAULT_MODE, "records": {}}
+    if not path.is_file():
+        return empty
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return {"mode": DEFAULT_MODE, "records": {}}
+    except OSError as exc:
+        if strict:
+            raise BestHashLoadError(str(exc), corrupt=False) from exc
+        return empty
+    except (ValueError, TypeError) as exc:  # JSONDecodeError/UnicodeDecodeError ⊂ ValueError
+        if strict:
+            raise BestHashLoadError(str(exc), corrupt=True) from exc
+        return empty
     if not isinstance(data, dict):
-        return {"mode": DEFAULT_MODE, "records": {}}
+        if strict:
+            raise BestHashLoadError("store root is not an object", corrupt=True)
+        return empty
     mode = str(data.get("mode") or DEFAULT_MODE)
     raw_records = data.get("records")
     records: dict[str, BestHashRecord] = {}
@@ -125,7 +157,7 @@ def upsert_record_if_better(
         candidate_int = hash_be_hex_to_int(hash_be_hex)
     except ValueError:
         return None
-    state = load_best_hash_state()
+    state = load_best_hash_state(strict=True)  # raises BestHashLoadError: never overwrite
     mode = state["mode"]
     records: dict[str, BestHashRecord] = dict(state["records"])
     existing = records.get(network_id)

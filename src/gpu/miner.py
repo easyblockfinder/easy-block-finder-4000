@@ -331,7 +331,7 @@ class GpuMiner:
         start_nonce: int,
         count: int,
         max_hits: int = 256,
-        track_best: bool = True,
+        track_best: bool = False,
     ) -> SearchResult:
         """
         Tek kernel: [start_nonce, start_nonce+count) paralel.

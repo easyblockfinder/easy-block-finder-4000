@@ -44,7 +44,7 @@ from ui.busy_indicator import BusyIndicator
 from ui.donate_dialog import DonateDialog
 from ui.hardware_detect_page import HardwareDetectPage
 from ui.network_select import NetworkSelectPage
-from mining.best_hash import SUPPORTED_BEST_HASH_NETWORKS
+from mining.best_hash import SUPPORTED_BEST_HASH_NETWORKS, idle_difficulty_row
 from mining.best_hash_store import load_best_hash_state
 from ui.scoreboard import ScoreboardOverlayWindow, ScoreboardWidget
 from ui.settings_dialog import SettingsDialog
@@ -2165,9 +2165,8 @@ class MainWindow(QMainWindow):
                 rec = load_best_hash_state()["records"].get(self._network_id)
             except Exception:
                 rec = None
-            if rec is not None:
-                self._last_best_diff = rec.difficulty
-                self._last_net_diff = rec.network_difficulty_at_time
+            net, best = idle_difficulty_row(rec.difficulty if rec is not None else None)
+            self._last_net_diff, self._last_best_diff = net, best
         self._push_difficulty_row()
 
     def _apply_best_stats(self, stats: MiningStats) -> None:

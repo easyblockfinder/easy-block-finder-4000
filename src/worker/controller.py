@@ -25,10 +25,19 @@ from mining.bitcoin import (
 )
 from mining.best_hash import (
     SUPPORTED_BEST_HASH_NETWORKS,
+    hash_be_hex_to_int,
+    is_better_hash,
     network_difficulty_from_nbits,
     pick_best_candidate_hex,
+    verify_best_candidate,
 )
-from mining.best_hash_store import load_best_hash_state, upsert_record_if_better
+from mining.best_hash_store import (
+    BestHashLoadError,
+    BestHashRecord,
+    load_best_hash_state,
+    quarantine_corrupt_store,
+    upsert_record_if_better,
+)
 from mining.block_store import (
     STATUS_CANDIDATE,
     STATUS_ORPHAN,
@@ -145,6 +154,9 @@ class MiningController:
         self._profile: NetworkProfile = get_profile("btc")
         self._best_mode_cache: Optional[str] = None
         self._best_broken_pending = False
+        # In-memory best record for the active network (loaded once per start/switch).
+        self._best_record: Optional[BestHashRecord] = None
+        self._best_store_ok = True  # False after load failure → skip writes
         self._start_time = 0.0
         self._hash_window: list[tuple[float, float, int]] = []
         self._paused = False
@@ -634,10 +646,24 @@ class MiningController:
         if nid not in SUPPORTED_BEST_HASH_NETWORKS:
             return
         st.best_hash_mode = self._best_hash_mode()
+        self._best_record = None
+        self._best_store_ok = True
         try:
-            rec = load_best_hash_state()["records"].get(nid)
-        except Exception:
+            rec = load_best_hash_state(strict=True)["records"].get(nid)
+        except BestHashLoadError as exc:
+            if exc.corrupt:
+                bak = quarantine_corrupt_store()
+                log.warning("best hash store corrupt (%s); quarantined to %s", exc, bak)
+                self._best_store_ok = bak is not None
+            else:
+                log.warning("best hash store unreadable (%s); persistence disabled", exc)
+                self._best_store_ok = False
             rec = None
+        except Exception as exc:
+            log.warning("best hash load failed (%s); persistence disabled", exc)
+            self._best_store_ok = False
+            rec = None
+        self._best_record = rec
         if rec:
             st.best_difficulty = rec.difficulty
             st.best_hash_be_hex = rec.hash_be_hex
@@ -654,10 +680,12 @@ class MiningController:
         self.stats.best_hash_mode = mode
         candidates: list[str] = []
         nonce_by_hex: dict[str, str] = {}
+        nonce_int_by_hex: dict[str, int] = {}
         if mode == "gpu_batch" and result.best_hash_be_hex and result.best_nonce is not None:
             hx = result.best_hash_be_hex
             candidates.append(hx)
             nonce_by_hex[hx] = f"{int(result.best_nonce):08x}"
+            nonce_int_by_hex[hx] = int(result.best_nonce)
         if mode == "accepted_only":
             for v in verified_list:
                 hx = str(v.get("hash_be_hex") or v.get("hash_hex") or "").strip().lower()
@@ -666,9 +694,28 @@ class MiningController:
                     nonce_by_hex[hx] = str(
                         v.get("nonce_hex") or nonce_to_submit_hex(int(v["nonce"]))
                     )
+                    nonce_int_by_hex[hx] = int(v["nonce"])
         cand = pick_best_candidate_hex(candidates)
         if not cand:
             return
+        if not self._best_store_ok:
+            return
+        # Only touch disk / re-hash when strictly better than the in-memory record.
+        cached = self._best_record
+        try:
+            cached_int = hash_be_hex_to_int(cached.hash_be_hex) if cached else None
+        except ValueError:
+            cached_int = None
+        if not is_better_hash(hash_be_hex_to_int(cand), cached_int):
+            return
+        # CPU-verify the reported digest before persisting (improve path only).
+        nonce_int = nonce_int_by_hex.get(cand)
+        if nonce_int is None or not verify_best_candidate(
+            snap.header_for_nonce(nonce_int), cand
+        ):
+            log.warning("best hash candidate failed CPU verify; discarded (nonce=%s)", nonce_int)
+            return
+        had_previous = cached is not None
         try:
             rec = upsert_record_if_better(
                 nid,
@@ -678,14 +725,20 @@ class MiningController:
                 nbits=str(snap.nbits),
                 network_difficulty_at_time=self.stats.network_difficulty,
             )
+        except BestHashLoadError as exc:
+            log.warning("best hash store unreadable; write skipped: %s", exc)
+            self._best_store_ok = False
+            return
         except Exception as exc:
             log.warning("best hash persist failed: %s", exc)
             return
         if rec:
+            self._best_record = rec
             self.stats.best_difficulty = rec.difficulty
             self.stats.best_hash_be_hex = rec.hash_be_hex
-            self.stats.best_record_broken = True
-            self._best_broken_pending = True
+            if had_previous:  # first-ever record establishes baseline, no celebration
+                self.stats.best_record_broken = True
+                self._best_broken_pending = True
 
     def _run(self, session: int) -> None:
         try:
@@ -1951,6 +2004,7 @@ class MiningController:
             track_best = (
                 self.network_id in SUPPORTED_BEST_HASH_NETWORKS
                 and self._best_hash_mode() == "gpu_batch"
+                and self._best_store_ok
             )
             try:
                 t0 = time.perf_counter()

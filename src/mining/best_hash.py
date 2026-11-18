@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mining.bitcoin import DIFF1_TARGET, bits_to_target
+from mining.bitcoin import DIFF1_TARGET, bits_to_target, hash256
 
 SUPPORTED_BEST_HASH_NETWORKS = frozenset({"btc", "bch"})
 
@@ -53,6 +53,22 @@ def pick_best_candidate_hex(candidates: list[str]) -> str | None:
             best_int = value
             best_hex = raw.strip().lower()
     return best_hex
+
+
+def verify_best_candidate(header80: bytes, claimed_hash_be_hex: str) -> bool:
+    """CPU re-hash of header+nonce; True only if digest matches the GPU-reported hash."""
+    if len(header80) != 80:
+        return False
+    try:
+        claimed = hash_be_hex_to_int(claimed_hash_be_hex)
+    except (ValueError, AttributeError):
+        return False
+    return hash_digest_be_to_int(hash256(header80)[::-1]) == claimed
+
+
+def idle_difficulty_row(best_difficulty: float | None) -> tuple[float | None, float | None]:
+    """Idle (no job): NET is always unknown (\u2014); BEST shows the stored record."""
+    return None, best_difficulty
 
 
 def format_diff_short(v: float | None) -> str:
