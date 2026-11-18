@@ -35,14 +35,20 @@ class SearchResult:
     start_nonce: int
     raw_hit_count: int = 0  # atomic counter (before buffer limit)
     truncated: bool = False
-    # Batch minimum PoW hash: raw SHA-256d digest bytes (struct.pack(">8I", h0..h7))
+    # Batch minimum PoW hash. WARNING: RAW SHA-256d digest bytes (NOT display/BE order);
+    # do not pass best_hash_be.hex() to hash_be_hex_to_int — use best_hash_be_hex.
     best_hash_be: Optional[bytes] = None
     best_nonce: Optional[int] = None
 
     @property
-    def best_hash_display_be(self) -> Optional[bytes]:
-        """Digest reversed = display order; int(..., 'big') is the PoW value."""
-        return None if self.best_hash_be is None else self.best_hash_be[::-1]
+    def best_hash_be_hex(self) -> Optional[str]:
+        """Explorer/PoW form (digest[::-1] hex) == mining hash_be_hex; safe for hash_be_hex_to_int."""
+        return None if not self.best_hash_be else self.best_hash_be[::-1].hex()
+
+    @property
+    def best_hash_int(self) -> Optional[int]:
+        """PoW value: int.from_bytes(digest[::-1], 'big')."""
+        return None if not self.best_hash_be else int.from_bytes(self.best_hash_be[::-1], "big")
 
 
 def target_to_le_words(target: int) -> list[int]:
@@ -336,6 +342,11 @@ class GpuMiner:
             return SearchResult([], 0, 0, self._local_size, start_nonce)
         if len(midstate) != 32:
             raise ValueError("The midstate must be 32 bytes.")
+        ls = int(self._local_size)
+        if track_best and (ls <= 0 or ls > 512 or (ls & (ls - 1)) != 0):
+            raise ValueError(
+                f"track_best requires a power-of-two local_size <= 512 (got {ls})."
+            )
         if start_nonce + count - 1 > 0xFFFFFFFF:
             count = 0xFFFFFFFF - start_nonce + 1
 
