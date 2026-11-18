@@ -51,3 +51,13 @@ def test_digest_pack_matches_be_words_and_pow_order():
     key = [struct.unpack("<I", struct.pack(">I", words[7 - i]))[0] for i in range(8)]
     assert struct.pack(">8I", *key) == digest[::-1]
     assert int.from_bytes(digest, "little") == int.from_bytes(struct.pack(">8I", *key), "big")
+
+
+def test_pick_best_candidate_hex():
+    from mining.best_hash import pick_best_candidate_hex
+
+    lo = "00" * 4 + "11" * 28
+    hi = "00" * 3 + "ff" * 29
+    assert pick_best_candidate_hex([hi, lo, "zz", ""]) == lo
+    assert pick_best_candidate_hex([]) is None
+    assert pick_best_candidate_hex(["bad", "00" * 32]) is None

@@ -37,3 +37,19 @@ def is_better_hash(candidate_int: int, record_int: int | None) -> bool:
     if record_int is None:
         return True
     return candidate_int < record_int
+
+def pick_best_candidate_hex(candidates: list[str]) -> str | None:
+    """Return the smallest valid 64-hex (explorer-order) hash, or None."""
+    best_hex: str | None = None
+    best_int: int | None = None
+    for raw in candidates:
+        if not raw:
+            continue
+        try:
+            value = hash_be_hex_to_int(raw)
+        except (ValueError, AttributeError):
+            continue
+        if is_better_hash(value, best_int):
+            best_int = value
+            best_hex = raw.strip().lower()
+    return best_hex

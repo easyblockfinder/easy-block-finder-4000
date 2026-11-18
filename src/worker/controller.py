@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Optional
 
 from app_meta import APP_NAME
@@ -22,6 +23,12 @@ from mining.bitcoin import (
     nonce_to_submit_hex,
     validate_address_for_network,
 )
+from mining.best_hash import (
+    SUPPORTED_BEST_HASH_NETWORKS,
+    network_difficulty_from_nbits,
+    pick_best_candidate_hex,
+)
+from mining.best_hash_store import load_best_hash_state, upsert_record_if_better
 from mining.block_store import (
     STATUS_CANDIDATE,
     STATUS_ORPHAN,
@@ -99,6 +106,11 @@ class MiningStats:
     donation_active: bool = False
     thermal_source: str = ""
     network_id: str = "btc"
+    network_difficulty: Optional[float] = None
+    best_difficulty: Optional[float] = None
+    best_hash_be_hex: Optional[str] = None
+    best_record_broken: bool = False  # one-shot UI edge; cleared after emit
+    best_hash_mode: str = "gpu_batch"
 
 
 class MiningController:
@@ -131,6 +143,8 @@ class MiningController:
         self.test_mode = False
         self.network_id = "btc"
         self._profile: NetworkProfile = get_profile("btc")
+        self._best_mode_cache: Optional[str] = None
+        self._best_broken_pending = False
         self._start_time = 0.0
         self._hash_window: list[tuple[float, float, int]] = []
         self._paused = False
@@ -396,6 +410,9 @@ class MiningController:
                 app_donation_shares=0,
                 donation_active=False,
             )
+            self._best_broken_pending = False
+            self._best_mode_cache = None
+            self._load_best_into_stats(profile.id)
             # Yeni oturum eski thread i yeniden etkinle tirme
             self._session_gen += 1
             session = self._session_gen
@@ -583,7 +600,92 @@ class MiningController:
         if self._block_store.last_error:
             self.stats.block_store_error = self._block_store.last_error
         if self.on_stats:
-            self.on_stats(self.stats)
+            if self._best_broken_pending:
+                # Snapshot so the one-shot flag survives queued cross-thread delivery.
+                self._best_broken_pending = False
+                snap = replace(self.stats, best_record_broken=True)
+                self.stats.best_record_broken = False
+                self.on_stats(snap)
+            else:
+                self.on_stats(self.stats)
+
+    def _best_hash_mode(self) -> str:
+        mode = self._best_mode_cache
+        if mode is None:
+            env = (os.environ.get("EBF_BEST_HASH_MODE") or "").strip().lower()
+            if env in ("gpu_batch", "accepted_only"):
+                mode = env
+            else:
+                try:
+                    mode = str(load_best_hash_state().get("mode") or "gpu_batch")
+                except Exception:
+                    mode = "gpu_batch"
+                if mode not in ("gpu_batch", "accepted_only"):
+                    mode = "gpu_batch"
+            self._best_mode_cache = mode
+        return mode
+
+    def _load_best_into_stats(self, nid: str) -> None:
+        st = self.stats
+        st.network_difficulty = None
+        st.best_difficulty = None
+        st.best_hash_be_hex = None
+        st.best_record_broken = False
+        if nid not in SUPPORTED_BEST_HASH_NETWORKS:
+            return
+        st.best_hash_mode = self._best_hash_mode()
+        try:
+            rec = load_best_hash_state()["records"].get(nid)
+        except Exception:
+            rec = None
+        if rec:
+            st.best_difficulty = rec.difficulty
+            st.best_hash_be_hex = rec.hash_be_hex
+
+    def _track_best_hash(self, snap: Any, result: Any, verified_list: list[dict]) -> None:
+        nid = self.network_id
+        if nid not in SUPPORTED_BEST_HASH_NETWORKS:
+            return
+        try:
+            self.stats.network_difficulty = network_difficulty_from_nbits(snap.nbits)
+        except (ValueError, TypeError):
+            self.stats.network_difficulty = None
+        mode = self._best_hash_mode()
+        self.stats.best_hash_mode = mode
+        candidates: list[str] = []
+        nonce_by_hex: dict[str, str] = {}
+        if mode == "gpu_batch" and result.best_hash_be_hex and result.best_nonce is not None:
+            hx = result.best_hash_be_hex
+            candidates.append(hx)
+            nonce_by_hex[hx] = f"{int(result.best_nonce):08x}"
+        if mode == "accepted_only":
+            for v in verified_list:
+                hx = str(v.get("hash_be_hex") or v.get("hash_hex") or "").strip().lower()
+                if hx:
+                    candidates.append(hx)
+                    nonce_by_hex[hx] = str(
+                        v.get("nonce_hex") or nonce_to_submit_hex(int(v["nonce"]))
+                    )
+        cand = pick_best_candidate_hex(candidates)
+        if not cand:
+            return
+        try:
+            rec = upsert_record_if_better(
+                nid,
+                hash_be_hex=cand,
+                nonce_hex=nonce_by_hex.get(cand, ""),
+                job_id=str(snap.job_id),
+                nbits=str(snap.nbits),
+                network_difficulty_at_time=self.stats.network_difficulty,
+            )
+        except Exception as exc:
+            log.warning("best hash persist failed: %s", exc)
+            return
+        if rec:
+            self.stats.best_difficulty = rec.difficulty
+            self.stats.best_hash_be_hex = rec.hash_be_hex
+            self.stats.best_record_broken = True
+            self._best_broken_pending = True
 
     def _run(self, session: int) -> None:
         try:
@@ -1846,6 +1948,10 @@ class MiningController:
                 continue
 
             snap = work.snapshot
+            track_best = (
+                self.network_id in SUPPORTED_BEST_HASH_NETWORKS
+                and self._best_hash_mode() == "gpu_batch"
+            )
             try:
                 t0 = time.perf_counter()
                 result = self._gpu.search(
@@ -1854,6 +1960,7 @@ class MiningController:
                     share_target=snap.share_target_value,
                     start_nonce=work.start_nonce,
                     count=work.count,
+                    track_best=track_best,
                 )
                 # Tampon dolduysa a hedefiyle ikinci tarama blok aday kayb n telafi
                 if result.truncated:
@@ -1868,6 +1975,7 @@ class MiningController:
                         start_nonce=work.start_nonce,
                         count=work.count,
                         max_hits=64,
+                        track_best=False,
                     )
                     merged = list(dict.fromkeys(net_res.hits + result.hits))
                     result.hits = merged
@@ -1922,6 +2030,7 @@ class MiningController:
             for verified in verified_list:
                 self._handle_verified(work, verified)
 
+            self._track_best_hash(snap, result, verified_list)
             self._emit()
             if sleep_s > 0:
                 self._stop.wait(sleep_s)
