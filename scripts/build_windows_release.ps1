@@ -84,12 +84,42 @@ Get-ChildItem -LiteralPath $Payload -Recurse -File -Filter "*.pyc" -ErrorAction 
 # Bundle marker at payload root (start.bat also checks runtime\.deps_ok)
 Copy-Item -LiteralPath (Join-Path $Runtime ".deps_ok") -Destination (Join-Path $Payload ".deps_ok") -Force -ErrorAction SilentlyContinue
 
+# Drop non-runtime junk that blows past MAX_PATH and bloats the ZIP
+Get-ChildItem -LiteralPath (Join-Path $Payload "runtime") -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.Extension -match '\.(c|h|f|f90|pyx|pxd)$' -or
+        $_.Name -match '(^|\.)(test_|_test\.|tests\.|\.pyc$)' -or
+        $_.FullName -match '\\(tests|testing|__pycache__|examples|benchmarks)\\'
+    } |
+    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+
 Write-Host "Creating ZIP: $ZipPath"
 if (Test-Path -LiteralPath $ZipPath) { Remove-Item -LiteralPath $ZipPath -Force }
-# Zip contents = payload folder name as root entry
-Push-Location $Dist
-Compress-Archive -Path (Split-Path -Leaf $Payload) -DestinationPath (Split-Path -Leaf $ZipPath) -Force
-Pop-Location
+# Compress-Archive fails on long numpy paths — use Python zipfile instead
+$zipPy = @"
+import os, zipfile
+from pathlib import Path
+payload = Path(r'$Payload')
+zip_path = Path(r'$ZipPath')
+root = payload.parent
+with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    for dirpath, dirnames, filenames in os.walk(payload):
+        # skip leftover caches
+        dirnames[:] = [d for d in dirnames if d != '__pycache__']
+        for fn in filenames:
+            full = Path(dirpath) / fn
+            arc = full.relative_to(root).as_posix()
+            zf.write(full, arc)
+print('ZIP_OK', zip_path, 'bytes', zip_path.stat().st_size)
+"@
+$zipPyPath = Join-Path $Dist "_zip_payload.py"
+Set-Content -LiteralPath $zipPyPath -Value $zipPy -Encoding UTF8
+& py -3 $zipPyPath
+$zipExit = $LASTEXITCODE
+Remove-Item -LiteralPath $zipPyPath -Force -ErrorAction SilentlyContinue
+if ($zipExit -ne 0 -or -not (Test-Path -LiteralPath $ZipPath)) {
+    throw "Python ZIP creation failed"
+}
 
 function Find-ISCC {
     $candidates = @(
