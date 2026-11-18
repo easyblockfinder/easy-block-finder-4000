@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QPoint, QTimer, pyqtSignal
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -288,7 +288,12 @@ class ScoreboardOverlayWindow(QWidget):
         super().__init__(parent)
         self._on_user_close = on_user_close
         self._closing_by_user = False
-        self._drag_pos: QPoint | None = None
+        # Session-only: after the user drags, keep that spot until app restart.
+        self._user_placed = False
+        self._drag_origin: QPoint | None = None
+        self._drag_offset: QPoint | None = None
+        self._drag_moved = False
+        self._drag_from_close = False
 
         self.setWindowFlags(
             Qt.WindowType.Tool
@@ -333,10 +338,21 @@ class ScoreboardOverlayWindow(QWidget):
 
         self.board = ScoreboardWidget(compact=True)
         self.board.bind_external_summary(self.diff_title)
-        self.board.clicked.connect(self.activated.emit)
+        # Activation is handled on click-without-drag (see eventFilter).
         shell_l.addWidget(self.board)
         lay.addWidget(shell)
         self.adjustSize()
+        self._install_drag_filters(self)
+
+    def _install_drag_filters(self, root: QWidget) -> None:
+        root.installEventFilter(self)
+        for child in root.findChildren(QWidget):
+            child.installEventFilter(self)
+
+    def _after_content_resize(self) -> None:
+        self.adjustSize()
+        if self.isVisible() and not self._user_placed:
+            self.place_bottom_right()
 
     def update_counts(
         self,
@@ -346,15 +362,11 @@ class ScoreboardOverlayWindow(QWidget):
         attempts: int,
     ) -> None:
         self.board.update_counts(blocks, accepted, rejected, attempts)
-        self.adjustSize()
-        if self.isVisible():
-            self.place_bottom_right()
+        self._after_content_resize()
 
     def update_temp(self, temp_c: int | None) -> None:
         self.board.update_temp(temp_c)
-        self.adjustSize()
-        if self.isVisible():
-            self.place_bottom_right()
+        self._after_content_resize()
 
     def set_difficulty_row(
         self,
@@ -370,9 +382,7 @@ class ScoreboardOverlayWindow(QWidget):
             visible=visible,
             accepted_best=accepted_best,
         )
-        self.adjustSize()
-        if self.isVisible():
-            self.place_bottom_right()
+        self._after_content_resize()
 
     def celebrate_record(self) -> None:
         self.board.celebrate_record()
@@ -388,7 +398,10 @@ class ScoreboardOverlayWindow(QWidget):
         self.move(max(geo.left() + margin, x), max(geo.top() + margin, y))
 
     def show_overlay(self) -> None:
-        self.place_bottom_right()
+        # Fresh process → _user_placed is False → tray-top default.
+        # Same session after a manual drag → keep the user's spot.
+        if not self._user_placed:
+            self.place_bottom_right()
         self.show()
         self.raise_()
 
@@ -420,23 +433,44 @@ class ScoreboardOverlayWindow(QWidget):
             cb()
         event.accept()
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.activated.emit()
-            self._drag_pos = (
-                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            )
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        self._drag_pos = None
-        super().mouseReleaseEvent(event)
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        et = event.type()
+        if et == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+            if event.button() == Qt.MouseButton.LeftButton:
+                # Let the close button keep its own click.
+                w = obj if isinstance(obj, QWidget) else None
+                if w is not None and w.objectName() == "scoreClose":
+                    self._drag_from_close = True
+                    return False
+                self._drag_from_close = False
+                self._drag_origin = event.globalPosition().toPoint()
+                self._drag_offset = (
+                    event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                )
+                self._drag_moved = False
+                return False
+        if et == QEvent.Type.MouseMove and isinstance(event, QMouseEvent):
+            if (
+                self._drag_offset is not None
+                and not self._drag_from_close
+                and event.buttons() & Qt.MouseButton.LeftButton
+                and self._drag_origin is not None
+            ):
+                delta = event.globalPosition().toPoint() - self._drag_origin
+                if abs(delta.x()) > 3 or abs(delta.y()) > 3:
+                    self._drag_moved = True
+                    self._user_placed = True
+                    self.move(event.globalPosition().toPoint() - self._drag_offset)
+                    return True
+        if et == QEvent.Type.MouseButtonRelease and isinstance(event, QMouseEvent):
+            if event.button() == Qt.MouseButton.LeftButton:
+                moved = self._drag_moved
+                from_close = self._drag_from_close
+                self._drag_origin = None
+                self._drag_offset = None
+                self._drag_moved = False
+                self._drag_from_close = False
+                if not moved and not from_close:
+                    self.activated.emit()
+                return False
+        return super().eventFilter(obj, event)
