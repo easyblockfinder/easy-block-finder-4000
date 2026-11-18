@@ -43,7 +43,7 @@ QLabel#diffSummary {
     letter-spacing: 0.5px;
 }
 QLabel#diffSummaryCompact {
-    color: #ff6b5a;
+    color: #ffffff;
     font-size: 8px;
     font-weight: 700;
     letter-spacing: 0.5px;
@@ -317,6 +317,9 @@ class ScoreboardOverlayWindow(QWidget):
 
         self.diff_title = QLabel("")
         self.diff_title.setObjectName("diffSummaryCompact")
+        self.diff_title.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+        )
         self.diff_title.setVisible(False)
         top.addWidget(self.diff_title, 1)
 
