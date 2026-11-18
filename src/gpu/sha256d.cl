@@ -23,6 +23,32 @@ __constant uint K[64] = {
     0x748F82EEu,0x78A5636Fu,0x84C87814u,0x8CC70208u,0x90BEFFFAu,0xA4506CEBu,0xBEF9A3F7u,0xC67178F2u
 };
 
+/*
+ * Batch-best tracking (track_best != 0): same-kernel reduction, no second SHA.
+ * Key = display-order big-endian 256-bit PoW value:
+ *   key[0] = BSWAP(h7) (MSB) ... key[7] = BSWAP(h0).
+ * Smaller key wins. best_buf layout: [0..7]=key, [8]=nonce, [9]=lock.
+ * Host init: key = 0xFFFFFFFF x8, lock = 0. local size must be a power of two <= BEST_LOCAL_MAX.
+ */
+#define BEST_LOCAL_MAX 512
+
+inline int key_less_ll(__local const uint *a, __local const uint *b) {
+    for (int i = 0; i < 8; i++) {
+        if (a[i] < b[i]) return 1;
+        if (a[i] > b[i]) return 0;
+    }
+    return 0;
+}
+
+inline int key_less_lg(__local const uint *a, volatile __global const uint *b) {
+    for (int i = 0; i < 8; i++) {
+        const uint bv = b[i];
+        if (a[i] < bv) return 1;
+        if (a[i] > bv) return 0;
+    }
+    return 0;
+}
+
 __kernel void sha256d_search(
     __global const uint *midstate,
     const uint tail0,
@@ -33,10 +59,17 @@ __kernel void sha256d_search(
     __global uint *out_nonces,
     __global uint *out_count,
     const uint max_out,
-    const uint count
+    const uint count,
+    __global uint *best_buf,
+    const uint track_best
 ) {
+    __local uint lkey[BEST_LOCAL_MAX * 8];
+    __local uint lnonce[BEST_LOCAL_MAX];
+
     const uint tid = get_global_id(0);
-    if (tid >= count) return;
+    const uint lid = get_local_id(0);
+    const int valid = (tid < count);
+    if (!valid && !track_best) return;
 
     const uint nonce = nonce_base + tid;
 
@@ -113,6 +146,43 @@ __kernel void sha256d_search(
     h5 = f + 0x9B05688Cu;
     h6 = g + 0x1F83D9ABu;
     h7 = h + 0x5BE0CD19u;
+
+    if (track_best) {
+        /* Invalid lanes keep 0xFFFFFFFF keys so they never win. */
+        lkey[lid * 8 + 0] = valid ? BSWAP(h7) : 0xFFFFFFFFu;
+        lkey[lid * 8 + 1] = valid ? BSWAP(h6) : 0xFFFFFFFFu;
+        lkey[lid * 8 + 2] = valid ? BSWAP(h5) : 0xFFFFFFFFu;
+        lkey[lid * 8 + 3] = valid ? BSWAP(h4) : 0xFFFFFFFFu;
+        lkey[lid * 8 + 4] = valid ? BSWAP(h3) : 0xFFFFFFFFu;
+        lkey[lid * 8 + 5] = valid ? BSWAP(h2) : 0xFFFFFFFFu;
+        lkey[lid * 8 + 6] = valid ? BSWAP(h1) : 0xFFFFFFFFu;
+        lkey[lid * 8 + 7] = valid ? BSWAP(h0) : 0xFFFFFFFFu;
+        lnonce[lid] = nonce;
+        barrier(CLK_LOCAL_MEM_FENCE);
+
+        for (uint s = get_local_size(0) >> 1; s > 0; s >>= 1) {
+            if (lid < s && key_less_ll(&lkey[(lid + s) * 8], &lkey[lid * 8])) {
+                for (int i = 0; i < 8; i++) lkey[lid * 8 + i] = lkey[(lid + s) * 8 + i];
+                lnonce[lid] = lnonce[lid + s];
+            }
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
+
+        if (lid == 0) {
+            /* key[0] only ever decreases -> safe lock-free pre-check */
+            if (lkey[0] <= ((volatile __global uint *)best_buf)[0]) {
+                volatile __global uint *gb = (volatile __global uint *)best_buf;
+                while (atomic_cmpxchg((volatile __global int *)&best_buf[9], 0, 1) != 0) { }
+                if (key_less_lg(lkey, gb)) {
+                    for (int i = 0; i < 8; i++) gb[i] = lkey[i];
+                    gb[8] = lnonce[0];
+                }
+                mem_fence(CLK_GLOBAL_MEM_FENCE);
+                atomic_xchg((volatile __global int *)&best_buf[9], 0);
+            }
+        }
+    }
+    if (!valid) return;
 
     /* LE uint32[8]; le[7] MSB — coarse filter first */
     const uint t7 = target_words[7];

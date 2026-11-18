@@ -35,6 +35,14 @@ class SearchResult:
     start_nonce: int
     raw_hit_count: int = 0  # atomic counter (before buffer limit)
     truncated: bool = False
+    # Batch minimum PoW hash: raw SHA-256d digest bytes (struct.pack(">8I", h0..h7))
+    best_hash_be: Optional[bytes] = None
+    best_nonce: Optional[int] = None
+
+    @property
+    def best_hash_display_be(self) -> Optional[bytes]:
+        """Digest reversed = display order; int(..., 'big') is the PoW value."""
+        return None if self.best_hash_be is None else self.best_hash_be[::-1]
 
 
 def target_to_le_words(target: int) -> list[int]:
@@ -184,6 +192,8 @@ class GpuMiner:
         self._d_tgt = None
         self._d_out = None
         self._d_cnt = None
+        self._d_best = None
+        self._host_best = np.zeros(10, dtype=np.uint32)  # key[8], nonce, lock
         # At Diff=1, there can be many shares per batch; it can reduce the 16-slot block candidate
         self._max_hits = 256
         self._host_ms = np.zeros(8, dtype=np.uint32)
@@ -252,6 +262,7 @@ class GpuMiner:
         self._d_tgt = cl.Buffer(self._ctx, mf.READ_ONLY, 32)
         self._d_out = cl.Buffer(self._ctx, mf.WRITE_ONLY, 4 * self._max_hits)
         self._d_cnt = cl.Buffer(self._ctx, mf.READ_WRITE, 4)
+        self._d_best = cl.Buffer(self._ctx, mf.READ_WRITE, 40)
 
         if autotune_local:
             self._local_size = self._autotune_local_size()
@@ -297,7 +308,7 @@ class GpuMiner:
         return best_ls
 
     def close(self) -> None:
-        self._d_ms = self._d_tgt = self._d_out = self._d_cnt = None
+        self._d_ms = self._d_tgt = self._d_out = self._d_cnt = self._d_best = None
         self._kernel = None
         self._kernel_hash = None
         self._queue = None
@@ -314,6 +325,7 @@ class GpuMiner:
         start_nonce: int,
         count: int,
         max_hits: int = 256,
+        track_best: bool = True,
     ) -> SearchResult:
         """
         Tek kernel: [start_nonce, start_nonce+count) paralel.
@@ -332,6 +344,7 @@ class GpuMiner:
         assert self._kernel is not None
         assert self._d_ms is not None and self._d_tgt is not None
         assert self._d_out is not None and self._d_cnt is not None
+        assert self._d_best is not None
 
         if max_hits != self._max_hits:
             self._max_hits = max_hits
@@ -352,6 +365,10 @@ class GpuMiner:
 
         self._host_cnt[0] = 0
         cl.enqueue_copy(self._queue, self._d_cnt, self._host_cnt)
+        if track_best:
+            self._host_best[:8] = 0xFFFFFFFF
+            self._host_best[8:] = 0
+            cl.enqueue_copy(self._queue, self._d_best, self._host_best)
 
         self._kernel.set_args(
             self._d_ms,
@@ -364,6 +381,8 @@ class GpuMiner:
             self._d_cnt,
             np.uint32(self._max_hits),
             np.uint32(int(count)),
+            self._d_best,
+            np.uint32(1 if track_best else 0),
         )
 
         local = int(self._local_size)
@@ -372,6 +391,8 @@ class GpuMiner:
             self._queue, self._kernel, (global_size,), (local,)
         )
         cl.enqueue_copy(self._queue, self._host_cnt, self._d_cnt)
+        if track_best:
+            cl.enqueue_copy(self._queue, self._host_best, self._d_best)
         self._queue.finish()
 
         raw_n = int(self._host_cnt[0])
@@ -383,6 +404,15 @@ class GpuMiner:
             self._queue.finish()
             hits = [int(x) for x in self._host_out[:n].tolist()]
 
+        best_hash_be: Optional[bytes] = None
+        best_nonce: Optional[int] = None
+        if track_best:
+            key = [int(x) for x in self._host_best[:8]]
+            if any(w != 0xFFFFFFFF for w in key):
+                # kernel key = display-order BE words; raw digest bytes are the reverse
+                best_hash_be = struct.pack(">8I", *key)[::-1]
+                best_nonce = int(self._host_best[8])
+
         return SearchResult(
             hits=hits,
             scanned=int(count),
@@ -391,6 +421,8 @@ class GpuMiner:
             start_nonce=int(start_nonce) & 0xFFFFFFFF,
             raw_hit_count=raw_n,
             truncated=truncated,
+            best_hash_be=best_hash_be,
+            best_nonce=best_nonce,
         )
 
     def hash_nonces(
