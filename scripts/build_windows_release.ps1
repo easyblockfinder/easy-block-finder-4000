@@ -94,48 +94,75 @@ Get-ChildItem -LiteralPath (Join-Path $Payload "runtime") -Recurse -File -ErrorA
     ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
 
 Write-Host "Creating ZIP: $ZipPath"
-if (Test-Path -LiteralPath $ZipPath) { Remove-Item -LiteralPath $ZipPath -Force }
+$ZipTmp = "$ZipPath.tmp"
+if (Test-Path -LiteralPath $ZipTmp) { Remove-Item -LiteralPath $ZipTmp -Force -ErrorAction SilentlyContinue }
 # Compress-Archive fails on long numpy paths — use Python zipfile instead
 $zipPy = @"
-import os, zipfile
+import os, zipfile, sys
 from pathlib import Path
 payload = Path(r'$Payload')
+zip_tmp = Path(r'$ZipTmp')
 zip_path = Path(r'$ZipPath')
 root = payload.parent
-with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-    for dirpath, dirnames, filenames in os.walk(payload):
-        # skip leftover caches
-        dirnames[:] = [d for d in dirnames if d != '__pycache__']
-        for fn in filenames:
-            full = Path(dirpath) / fn
-            arc = full.relative_to(root).as_posix()
+files = []
+for dirpath, dirnames, filenames in os.walk(payload):
+    dirnames[:] = [d for d in dirnames if d != '__pycache__']
+    for fn in filenames:
+        full = Path(dirpath) / fn
+        if full.is_file():
+            files.append(full)
+missing = 0
+with zipfile.ZipFile(zip_tmp, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    for full in files:
+        if not full.is_file():
+            missing += 1
+            continue
+        arc = full.relative_to(root).as_posix()
+        try:
             zf.write(full, arc)
-print('ZIP_OK', zip_path, 'bytes', zip_path.stat().st_size)
+        except FileNotFoundError:
+            missing += 1
+if zip_path.exists():
+    try:
+        zip_path.unlink()
+    except OSError:
+        bak = zip_path.with_suffix(zip_path.suffix + '.bak')
+        if bak.exists():
+            try: bak.unlink()
+            except OSError: pass
+        try:
+            zip_path.rename(bak)
+        except OSError as exc:
+            print('ZIP_REPLACE_FAIL', exc)
+            sys.exit(2)
+zip_tmp.replace(zip_path)
+print('ZIP_OK', zip_path, 'bytes', zip_path.stat().st_size, 'missing_skipped', missing)
 "@
 $zipPyPath = Join-Path $Dist "_zip_payload.py"
-Set-Content -LiteralPath $zipPyPath -Value $zipPy -Encoding UTF8
+# UTF8NoBOM — a UTF-8 BOM breaks the leading import when py runs the temp script
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($zipPyPath, $zipPy, $utf8NoBom)
 & py -3 $zipPyPath
 $zipExit = $LASTEXITCODE
 Remove-Item -LiteralPath $zipPyPath -Force -ErrorAction SilentlyContinue
 if ($zipExit -ne 0 -or -not (Test-Path -LiteralPath $ZipPath)) {
-    throw "Python ZIP creation failed"
+    throw "Python ZIP creation failed (exit=$zipExit)"
 }
 
 function Find-ISCC {
+    # Prefer a full Inno install; skip IDE-bundled ISCC (often fails on large payloads).
     $candidates = @(
+        (Join-Path $Root "build\tools\InnoSetup6\ISCC.exe"),
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
         "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
         "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
-        "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe",
-        (Join-Path $Root "build\tools\InnoSetup6\ISCC.exe")
+        "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe"
     )
     foreach ($c in $candidates) {
         if ($c -and (Test-Path -LiteralPath $c)) { return $c }
     }
-    $nodeIscc = Join-Path $env:LOCALAPPDATA "Programs\Antigravity IDE\resources\app\node_modules\innosetup\bin\ISCC.exe"
-    if (Test-Path -LiteralPath $nodeIscc) { return $nodeIscc }
     return $null
 }
 
