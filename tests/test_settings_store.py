@@ -42,5 +42,5 @@ def test_fresh_install_gets_wizard_and_new_defaults():
     data = ss._normalize_loaded({})
     assert data["setup_wizard_done"] is False
     assert data["intensity"] == 4
-    assert data["pause_temp"] == 75
-    assert data["resume_temp"] == 67
+    assert data["pause_temp"] == 65
+    assert data["resume_temp"] == 55

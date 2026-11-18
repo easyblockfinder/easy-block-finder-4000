@@ -125,8 +125,8 @@ class MiningController:
         self._known_jobs: list[MiningJob] = []
 
         self.intensity = 1
-        self.pause_temp = 80
-        self.resume_temp = 70
+        self.pause_temp = 65
+        self.resume_temp = 55
         self.address = ""
         self.test_mode = False
         self.network_id = "btc"

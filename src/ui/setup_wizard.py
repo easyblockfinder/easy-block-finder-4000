@@ -121,8 +121,7 @@ class SetupWizardPage(QWidget):
         tip.setObjectName("tagline")
         l2.addWidget(tip)
         self.form = MachineSettingsForm()
-        self.form.load_from(self._cfg)
-        self.form.apply_recommended_thermal(laptop=True)
+        self.form.load_from(self._cfg)  # fresh defaults: Pause 65°C / Resume 55°C
         btn_rec = QPushButton("Apply laptop recommendation (Pause 75°C / Resume 67°C)")
         btn_rec.clicked.connect(lambda: self.form.apply_recommended_thermal(laptop=True))
         btn_desk = QPushButton("Apply desktop recommendation (Pause 82°C / Resume 74°C)")

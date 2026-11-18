@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import faulthandler
 import sys
+import traceback
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Known console noise (legacy pynvml meta-package)
@@ -17,6 +20,39 @@ warnings.filterwarnings(
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+def _crash_log_path() -> Path:
+    import os
+
+    from app_meta import APP_DATA_DIRNAME
+
+    base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    folder = base / APP_DATA_DIRNAME
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "crash.log"
+
+
+def _install_crash_logging() -> None:
+    """Persist uncaught exceptions so silent tray/GUI exits leave a trail."""
+    try:
+        faulthandler.enable()
+    except Exception:
+        pass
+
+    log_path = _crash_log_path()
+
+    def _hook(exc_type, exc, tb) -> None:
+        text = "".join(traceback.format_exception(exc_type, exc, tb))
+        try:
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"\n===== {stamp} =====\n{text}")
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _hook
 
 
 def _force_light_palette(app) -> None:
@@ -58,6 +94,8 @@ def _force_light_palette(app) -> None:
 
 
 def main() -> int:
+    _install_crash_logging()
+
     from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 
     from app_meta import APP_NAME, APP_VERSION, APP_VERSION_LABEL, load_app_icon
@@ -72,18 +110,20 @@ def main() -> int:
     app_icon = load_app_icon()
     if not app_icon.isNull():
         app.setWindowIcon(app_icon)
-    app.setQuitOnLastWindowClosed(False)  # keep process alive when window closes to tray
-
-    if not QSystemTrayIcon.isSystemTrayAvailable():
-        # Classic quit-on-close when tray unavailable
-        app.setQuitOnLastWindowClosed(True)
+    # Always keep process alive when the main window is hidden to tray.
+    # (If tray is unavailable, closeEvent still quits via MainWindow.)
+    app.setQuitOnLastWindowClosed(False)
 
     guard = SingleInstanceGuard(app)
     if not guard.ensure_primary():
         # Another instance is running — it was asked to raise its window
         return 0
 
-    win = MainWindow()
+    try:
+        win = MainWindow()
+    except Exception:
+        # Ensure startup failures land in crash.log, then re-raise
+        raise
     guard.activated.connect(win.raise_to_front)
     app.aboutToQuit.connect(guard.close)
     win.show()

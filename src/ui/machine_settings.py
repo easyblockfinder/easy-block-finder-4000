@@ -133,8 +133,8 @@ class MachineSettingsForm(QWidget):
 
     def load_from(self, cfg: dict[str, Any]) -> None:
         self.intensity.setValue(int(cfg.get("intensity") or 1))
-        self.pause_temp.setValue(int(cfg.get("pause_temp") or 75))
-        self.resume_temp.setValue(int(cfg.get("resume_temp") or 67))
+        self.pause_temp.setValue(int(cfg.get("pause_temp") or 65))
+        self.resume_temp.setValue(int(cfg.get("resume_temp") or 55))
         self.cpu_threads.setValue(int(cfg.get("cpu_thread_limit") or 0))
         self.pause_battery.setChecked(bool(cfg.get("pause_on_battery", True)))
         bus = cfg.get("gpu_bus_id")
@@ -158,6 +158,7 @@ class MachineSettingsForm(QWidget):
         self.lbl_hw.setText(text or "Hardware: —")
 
     def apply_recommended_thermal(self, *, laptop: bool = True) -> None:
+        # Explicit presets (not fresh-install defaults — those are 65 / 55).
         if laptop:
             self.pause_temp.setValue(75)
             self.resume_temp.setValue(67)
@@ -171,8 +172,8 @@ class MachineSettingsForm(QWidget):
 def default_wizard_cfg(base: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     cfg = dict(base or {})
     cfg.setdefault("intensity", 4)
-    cfg.setdefault("pause_temp", 75)
-    cfg.setdefault("resume_temp", 67)
+    cfg.setdefault("pause_temp", 65)
+    cfg.setdefault("resume_temp", 55)
     cfg.setdefault("cpu_thread_limit", 0)
     cfg.setdefault("pause_on_battery", True)
     return cfg

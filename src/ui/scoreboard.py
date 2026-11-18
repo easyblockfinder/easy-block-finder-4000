@@ -242,7 +242,13 @@ class ScoreboardOverlayWindow(QWidget):
         self._closing_by_user = False
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        if self._on_user_close and not self._closing_by_user:
+        # Only treat an interactive dismiss as user-close. Programmatic
+        # close()/teardown must not persist scoreboard_overlay_enabled=false.
+        if (
+            self._on_user_close
+            and not self._closing_by_user
+            and self.isVisible()
+        ):
             self._on_user_close()
         event.accept()
 

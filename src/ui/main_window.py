@@ -1452,8 +1452,8 @@ class MainWindow(QMainWindow):
                 "address": addr,
                 "address_by_network": by_net,
                 "intensity": int(self._cfg.get("intensity") or 4),
-                "pause_temp": int(self._cfg.get("pause_temp") or 75),
-                "resume_temp": int(self._cfg.get("resume_temp") or 67),
+                "pause_temp": int(self._cfg.get("pause_temp") or 65),
+                "resume_temp": int(self._cfg.get("resume_temp") or 55),
                 "test_mode": self.test_mode.isChecked(),
                 "cpu_thread_limit": int(self._cfg.get("cpu_thread_limit") or 0),
                 "pause_on_battery": bool(self._cfg.get("pause_on_battery", True)),
@@ -1492,10 +1492,10 @@ class MainWindow(QMainWindow):
         return int(self._cfg.get("intensity") or 4)
 
     def _pause_temp_val(self) -> int:
-        return int(self._cfg.get("pause_temp") or 75)
+        return int(self._cfg.get("pause_temp") or 65)
 
     def _resume_temp_val(self) -> int:
-        return int(self._cfg.get("resume_temp") or 67)
+        return int(self._cfg.get("resume_temp") or 55)
 
     def _cpu_threads_val(self) -> int:
         return int(self._cfg.get("cpu_thread_limit") or 0)
@@ -2039,6 +2039,8 @@ class MainWindow(QMainWindow):
         act_show.triggered.connect(self._show_from_tray)
         act_hide = QAction("Minimize to tray", self)
         act_hide.triggered.connect(self.hide)
+        act_settings = QAction("Settings…", self)
+        act_settings.triggered.connect(self._open_settings)
         act_quit = QAction("Quit", self)
         act_quit.triggered.connect(self._quit_app)
         act_how = QAction("How to Use…", self)
@@ -2051,7 +2053,9 @@ class MainWindow(QMainWindow):
         self._act_show_scoreboard.triggered.connect(self._on_tray_show_scoreboard)
         menu.addAction(act_show)
         menu.addAction(act_hide)
+        menu.addAction(act_settings)
         menu.addAction(self._act_show_scoreboard)
+        menu.addSeparator()
         menu.addAction(act_how)
         menu.addAction(act_fb)
         menu.addAction(act_upd)
