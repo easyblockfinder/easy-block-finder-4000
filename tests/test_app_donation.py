@@ -52,7 +52,7 @@ def test_qr_pixmap_builds():
     from PyQt6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication([])
-    pm = qr_pixmap("bc1q4t3ax0xj8lpv6t8vhnv3x0jmth723x7l86rsak", modules=4)
+    pm = qr_pixmap("bc1q4t3ax0xj8lpv6t8vhnv3x0jmth723x7l86rsak", display_px=160)
     assert app is not None
     assert not pm.isNull()
     assert pm.width() > 40

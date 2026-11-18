@@ -1,8 +1,9 @@
 # Add a Python install dir (+ Scripts) to the current user's PATH permanently.
-# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File add_python_user_path.ps1 -PythonExe "C:\...\python.exe"
+# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File add_python_user_path.ps1 -PythonExe "C:\...\python.exe" [-Quiet]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$PythonExe
+    [string]$PythonExe,
+    [switch]$Quiet
 )
 
 $ErrorActionPreference = "Stop"

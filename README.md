@@ -6,17 +6,19 @@
 
 **Website:** [https://easyblockfinder.com](https://easyblockfinder.com)
 
-**Download for Windows:** [Latest release (ZIP)](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest)
+**Download for Windows:** [Latest release (Setup)](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest)
 
 ---
 
-First time with the ready Windows package (verified on a clean Windows PC):
+First time on a clean Windows PC:
 
-1. Download **`EBF4000-v*-windows.zip`** from the link above, then **extract** the zip to a normal folder (Desktop or Documents — do not run from inside WinRAR/7-Zip).
-2. Double-click **`start.bat`**. If Python is missing, accept the offered auto-install (PATH is enabled for you). Wait until the app window opens.
+1. Download **`EBF4000-v*-windows-setup.exe`** and run it (Python is **bundled** — you do not install Python yourself).
+2. Finish the wizard, launch **`EBF4000.exe`** (Start Menu / Desktop shortcut). Bundled Python is added to your user PATH when that option is left checked. (`start.bat` remains as a fallback console launcher.)
 3. Choose a network, enter your payout address, then press **Start**. Miners (XMRig/Rigel) download only after in-app consent.
 
-**Free & Open-Source Solo Mining Software** (EBF4000 - v1.0.7)
+Optional: a portable **`EBF4000-v*-windows.zip`** (also includes `runtime\`) is published for advanced users / signed in-app updates.
+
+**Free & Open-Source Solo Mining Software** (EBF4000 - v1.0.8)
 
 Easy Block Finder 4000 is an independent, open-source **solo mining** app for Windows (BTC, BCH, XMR, RVN, ERG).  
 It is not a simulation. **No earnings or hashrate are guaranteed.**
@@ -42,13 +44,23 @@ Feedback: **Help → Feedback / Suggestions…** (`sametkuzu82@gmail.com`).
 
 ## Setup (Windows)
 
-**Ready package:** use [Download for Windows](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest) and the three steps at the top of this README.
+**Ready package:** use [Download for Windows](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest) (`*-windows-setup.exe`).
 
-**From source** (after cloning this repo):
+**Maintainers — build Setup + ZIP (embeds CPython 3.12):**
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1
+```
+
+Outputs under `dist\`: `EBF4000-v*-windows-setup.exe` and `EBF4000-v*-windows.zip`.
+
+**From source** (dev tree without `runtime\`): install Python 3.12, then:
 
 ```bat
 start.bat
 ```
+
+Or prepare a local bundle: `scripts\prepare_embedded_python.ps1` then `start.bat`.
 
 Data folder: `%LOCALAPPDATA%\EasyBlockFinder4000`  
 (legacy `SoloBlockStrike` / `BTCHunter` settings migrate once)
@@ -100,7 +112,7 @@ python -m pytest -q
 ```
 
 Signed update packages: see [RELEASE_SIGNING.md](RELEASE_SIGNING.md).  
-Latest Windows ZIP: [Releases](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest).
+Latest Windows Setup / ZIP: [Releases](https://github.com/easyblockfinder/easy-block-finder-4000/releases/latest).
 
 ## License & trademarks
 

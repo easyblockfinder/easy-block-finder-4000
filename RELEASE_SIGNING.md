@@ -15,19 +15,25 @@ Secret key default path:
 
 Back up that folder offline. Commit only the updated public key in `trusted_keys.py`.
 
-## Build a Windows ZIP (channel C — source tree)
+## Build Windows Setup + ZIP (bundled CPython)
 
 From a clean tree (no `.venv`, no local secrets):
 
 1. Set `APP_VERSION` in `src/app_meta.py` to the SemVer you are releasing (e.g. `1.1.0`).
-2. Pack:
+2. Build payload, ZIP, and Setup.exe (downloads embeddable Python once into `runtime\`):
 
-```bat
-mkdir dist
-powershell -Command "Compress-Archive -Path start.bat,src,scripts,requirements.txt,third_party,assets,LICENSE,README.md,SECURITY.md,THIRD_PARTY_NOTICES.md,DONATE.md,TRADEMARKS.md,RELEASE_SIGNING.md -DestinationPath dist\EBF4000-v1.1.0-windows.zip"
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1
 ```
 
-Use the exact name: `EBF4000-v{VERSION}-windows.zip`.
+Outputs:
+
+- `dist\EBF4000-v{VERSION}-windows-setup.exe` — primary end-user installer (Python embedded)
+- `dist\EBF4000-v{VERSION}-windows.zip` — portable / in-app update asset (also includes `runtime\`)
+
+Inno Setup 6 is required for the `.exe` (the script will try `winget install JRSoftware.InnoSetup` if missing).
+
+Sign **the ZIP** as before (in-app updater verifies `*-windows.zip` + `SHA256SUMS`). Optionally also publish the Setup.exe on the same GitHub Release for first-time installs.
 
 ## Sign the package
 

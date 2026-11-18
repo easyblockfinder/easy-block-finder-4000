@@ -2,6 +2,7 @@
 .deps_ok
 .venv/
 venv/
+runtime/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -11,6 +12,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+*.ico
 
 # Secrets / local env
 .env

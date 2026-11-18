@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from typing import Iterator
+
 from app_meta import (
     APP_NAME,
     APP_TITLE,
@@ -29,6 +32,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QStyle,
     QSystemTrayIcon,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -39,7 +43,10 @@ from networks.profiles import get_profile, list_profiles, normalize_network_id
 from ui.donate_dialog import DonateDialog
 from ui.hardware_detect_page import HardwareDetectPage
 from ui.network_select import NetworkSelectPage
+from ui.scoreboard import ScoreboardOverlayWindow, ScoreboardWidget
+from ui.settings_dialog import SettingsDialog
 from ui.settings_store import load_settings, save_settings, settings_file
+from ui.setup_wizard import SetupWizardPage
 from worker.controller import MiningController, MiningStats
 
 
@@ -101,6 +108,33 @@ QFrame#panel {
     background: #f7f9fb;
     border: 1px solid #d5dde5;
     border-radius: 10px;
+}
+QTabWidget#mineTabs::pane {
+    background: #f7f9fb;
+    border: 1px solid #d5dde5;
+    border-radius: 10px;
+    top: -1px;
+    padding: 4px;
+}
+QTabWidget#mineTabs QTabBar::tab {
+    background: #e8edf2;
+    color: #4a5a68;
+    border: 1px solid #d5dde5;
+    border-bottom: none;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 8px 14px;
+    margin-right: 3px;
+    font-weight: 600;
+    font-size: 12px;
+}
+QTabWidget#mineTabs QTabBar::tab:selected {
+    background: #f7f9fb;
+    color: #0b3d2e;
+}
+QTabWidget#mineTabs QTabBar::tab:hover:!selected {
+    background: #f0f3f6;
+    color: #15202b;
 }
 QLineEdit, QSpinBox, QTextEdit, QPlainTextEdit {
     background: #ffffff;
@@ -282,7 +316,7 @@ class MainWindow(QMainWindow):
         w = int(self._cfg.get("window_width") or 760)
         h = int(self._cfg.get("window_height") or 720)
         self.resize(max(680, w), max(640, h))
-        self.setMinimumSize(680, 620)
+        self.setMinimumSize(820, 620)
 
         self._bridge = _StatsBridge()
         self._bridge.updated.connect(self._apply_stats)
@@ -305,13 +339,19 @@ class MainWindow(QMainWindow):
         self._capacity_worker = None
         self._idle_prep_worker: _IdlePrepWorker | None = None
         self._capacity_blocks = self._load_capacity_blocks()
+        self._last_scoreboard = (0, 0, 0, 0)  # blocks, accepted, rejected, attempts
+        self._scoreboard_overlay: ScoreboardOverlayWindow | None = None
 
         self._build_menu()
 
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
-        # 0: network select → 1: optional hardware → 2: mining
+        # 0: setup wizard → 1: network select → 2: optional hardware → 3: mining
+        self._setup_wizard = SetupWizardPage(self._cfg)
+        self._setup_wizard.finished.connect(self._on_setup_wizard_finished)
+        self._stack.addWidget(self._setup_wizard)
+
         self._select_page = NetworkSelectPage(
             self._network_id,
             blocked=self._network_blocked_map(),
@@ -339,9 +379,11 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(14)
 
-        # Brand logo + Donate (top right)
+        # Logo + scoreboard under it | Donate aligned to logo top-right
         head = QHBoxLayout()
+        head.setSpacing(12)
         brand_col = QVBoxLayout()
+        brand_col.setSpacing(8)
         logo_pix = load_app_logo_pixmap(440, 96)
         brand = QLabel()
         brand.setObjectName("brand")
@@ -355,7 +397,13 @@ class MainWindow(QMainWindow):
         ver = QLabel(APP_VERSION_LABEL)
         ver.setObjectName("tagline")
         brand_col.addWidget(ver)
+        self.scoreboard = ScoreboardWidget(compact=False)
+        brand_col.addWidget(self.scoreboard)
         head.addLayout(brand_col, 1)
+
+        right_btns = QVBoxLayout()
+        right_btns.setSpacing(8)
+        right_btns.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
         self.btn_donate = QPushButton("Donate")
         self.btn_donate.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_donate.setMinimumHeight(36)
@@ -365,16 +413,21 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background: #e53935; }"
         )
         self.btn_donate.clicked.connect(self._on_donate)
-        head.addWidget(self.btn_donate, 0, Qt.AlignmentFlag.AlignTop)
+        right_btns.addWidget(self.btn_donate, 0, Qt.AlignmentFlag.AlignRight)
+        right_btns.addStretch(1)
+        head.addLayout(right_btns, 0)
         layout.addLayout(head)
+
+        self._scoreboard_overlay = ScoreboardOverlayWindow(
+            on_user_close=self._on_scoreboard_overlay_closed,
+            parent=None,
+        )
+        self._scoreboard_overlay.activated.connect(self._show_from_tray)
 
         net_row = QHBoxLayout()
         self.lbl_network_badge = QLabel("")
         self.lbl_network_badge.setObjectName("sectionTitle")
-        self.btn_change_network = QPushButton("Change network")
-        self.btn_change_network.clicked.connect(self._on_change_network)
         net_row.addWidget(self.lbl_network_badge, 1)
-        net_row.addWidget(self.btn_change_network, 0)
         layout.addLayout(net_row)
 
         self.lbl_tagline = QLabel("")
@@ -391,16 +444,37 @@ class MainWindow(QMainWindow):
         diff_note.setWordWrap(True)
         layout.addWidget(diff_note)
 
-        # Settings panel
-        settings = QFrame()
-        settings.setObjectName("panel")
+        # Start / Stop always visible (not buried in a tab)
+        btns = QHBoxLayout()
+        btns.setSpacing(10)
+        self.start_btn = QPushButton("Start")
+        self.start_btn.setObjectName("startBtn")
+        self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setObjectName("stopBtn")
+        self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_btn.setEnabled(False)
+        self.btn_change_network = QPushButton("Change network")
+        self.btn_change_network.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_change_network.clicked.connect(self._on_change_network)
+        self.start_btn.clicked.connect(self._on_start)
+        self.stop_btn.clicked.connect(self._on_stop)
+        btns.addWidget(self.start_btn)
+        btns.addWidget(self.stop_btn)
+        btns.addWidget(self.btn_change_network)
+        btns.addStretch(1)
+        layout.addLayout(btns)
+
+        tabs = QTabWidget()
+        tabs.setObjectName("mineTabs")
+        tabs.setDocumentMode(True)
+        self._mine_tabs = tabs
+
+        # --- Settings (default) ---
+        settings = QWidget()
         s_layout = QVBoxLayout(settings)
         s_layout.setContentsMargins(14, 12, 14, 12)
         s_layout.setSpacing(10)
-
-        st = QLabel("Settings")
-        st.setObjectName("sectionTitle")
-        s_layout.addWidget(st)
 
         self.addr_lbl = QLabel("Payout address")
         self.addr_lbl.setObjectName("statKey")
@@ -420,56 +494,18 @@ class MainWindow(QMainWindow):
         s_layout.addWidget(self._addr_hint)
         self._refresh_addr_hint()
 
-        row = QHBoxLayout()
-        row.setSpacing(12)
-
-        def _spin_block(title: str, widget: QWidget) -> QVBoxLayout:
-            box = QVBoxLayout()
-            box.setSpacing(4)
-            lab = QLabel(title)
-            lab.setObjectName("statKey")
-            box.addWidget(lab)
-            box.addWidget(widget)
-            return box
-
-        self.intensity = QSpinBox()
-        self.intensity.setRange(1, 10)
-        self.intensity.setValue(int(self._cfg.get("intensity") or 1))
-        self.intensity.setMinimumHeight(34)
-        self.intensity.valueChanged.connect(self._persist_form)
-
-        self.pause_temp = QSpinBox()
-        self.pause_temp.setRange(50, 95)
-        self.pause_temp.setValue(int(self._cfg.get("pause_temp") or 80))
-        self.pause_temp.valueChanged.connect(self._persist_form)
-
-        self.resume_temp = QSpinBox()
-        self.resume_temp.setRange(40, 90)
-        self.resume_temp.setValue(int(self._cfg.get("resume_temp") or 70))
-        self.resume_temp.valueChanged.connect(self._persist_form)
-
-        row.addLayout(_spin_block("Intensity", self.intensity))
-        row.addLayout(_spin_block("Pause at", _temp_spin_row(self.pause_temp)))
-        row.addLayout(_spin_block("Resume at", _temp_spin_row(self.resume_temp)))
-        s_layout.addLayout(row)
-
         self.test_mode = QCheckBox("Test mode (no pool, no real submit)")
         self.test_mode.setChecked(bool(self._cfg.get("test_mode")))
         self.test_mode.toggled.connect(self._persist_form)
         s_layout.addWidget(self.test_mode)
 
-        self.cpu_threads = QSpinBox()
-        self.cpu_threads.setRange(0, 256)
-        self.cpu_threads.setValue(int(self._cfg.get("cpu_thread_limit") or 0))
-        self.cpu_threads.setMinimumHeight(34)
-        self.cpu_threads.valueChanged.connect(self._persist_form)
-        self.cpu_threads_wrap = _spin_block("CPU threads (0=auto)", self.cpu_threads)
-        s_layout.addLayout(self.cpu_threads_wrap)
-
-        self.pause_battery = QCheckBox("Stop XMR mining on battery power")
-        self.pause_battery.setChecked(bool(self._cfg.get("pause_on_battery", True)))
-        self.pause_battery.toggled.connect(self._persist_form)
-        s_layout.addWidget(self.pause_battery)
+        settings_hint = QLabel(
+            "Intensity, temperature limits, CPU threads, and GPU pick are in "
+            "Settings (menu → Settings…)."
+        )
+        settings_hint.setObjectName("tagline")
+        settings_hint.setWordWrap(True)
+        s_layout.addWidget(settings_hint)
 
         self.lbl_thermal_src = QLabel("Temperature source: —")
         self.lbl_thermal_src.setObjectName("statKey")
@@ -499,42 +535,14 @@ class MainWindow(QMainWindow):
         fee_hint.setObjectName("tagline")
         fee_hint.setWordWrap(True)
         s_layout.addWidget(fee_hint)
+        s_layout.addStretch(1)
+        tabs.addTab(settings, "Settings")
 
-        self.lbl_gpu_bus = QLabel("GPU bus/UUID: (auto on single GPU)")
-        self.lbl_gpu_bus.setObjectName("statKey")
-        self.lbl_gpu_bus.setWordWrap(True)
-        s_layout.addWidget(self.lbl_gpu_bus)
-        self.btn_pick_gpu = QPushButton("Pick GPU (bus/UUID)")
-        self.btn_pick_gpu.clicked.connect(self._on_pick_gpu)
-        s_layout.addWidget(self.btn_pick_gpu)
-
-        btns = QHBoxLayout()
-        btns.setSpacing(10)
-        self.start_btn = QPushButton("Start")
-        self.start_btn.setObjectName("startBtn")
-        self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.setObjectName("stopBtn")
-        self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stop_btn.setEnabled(False)
-        self.start_btn.clicked.connect(self._on_start)
-        self.stop_btn.clicked.connect(self._on_stop)
-        btns.addWidget(self.start_btn)
-        btns.addWidget(self.stop_btn)
-        btns.addStretch(1)
-        s_layout.addLayout(btns)
-        layout.addWidget(settings)
-
-        # Status panel — 2-column grid
-        status = QFrame()
-        status.setObjectName("panel")
+        # --- Status ---
+        status = QWidget()
         st_outer = QVBoxLayout(status)
         st_outer.setContentsMargins(14, 12, 14, 12)
         st_outer.setSpacing(10)
-
-        st2 = QLabel("Status")
-        st2.setObjectName("sectionTitle")
-        st_outer.addWidget(st2)
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(16)
@@ -613,21 +621,25 @@ class MainWindow(QMainWindow):
         st_outer.addWidget(submit_title)
         self.submit_log_view = QTextEdit()
         self.submit_log_view.setReadOnly(True)
-        self.submit_log_view.setMinimumHeight(70)
-        self.submit_log_view.setMaximumHeight(110)
+        self.submit_log_view.setMinimumHeight(90)
         self.submit_log_view.setFont(QFont("Cascadia Mono", 9))
         self.submit_log_view.setPlaceholderText(
             "Submit request/response pairs match by id here. Accepted only when result=true."
         )
-        st_outer.addWidget(self.submit_log_view)
-        layout.addWidget(status)
+        st_outer.addWidget(self.submit_log_view, 1)
+        tabs.addTab(status, "Status")
 
-        # Block candidate alert (shown when found)
+        # --- Block ---
+        block_tab = QWidget()
+        bp = QVBoxLayout(block_tab)
+        bp.setContentsMargins(14, 12, 14, 12)
+        bp.setSpacing(8)
+
         self.block_alert = QFrame()
         self.block_alert.setObjectName("blockAlert")
         self.block_alert.setVisible(False)
         ba = QVBoxLayout(self.block_alert)
-        ba.setContentsMargins(14, 12, 14, 12)
+        ba.setContentsMargins(10, 8, 10, 8)
         ba.setSpacing(6)
         self.lbl_block_alert_title = QLabel("BLOCK CANDIDATE")
         self.lbl_block_alert_title.setObjectName("blockAlertTitle")
@@ -636,17 +648,8 @@ class MainWindow(QMainWindow):
         self.lbl_block_alert_body.setObjectName("blockAlertBody")
         self.lbl_block_alert_body.setWordWrap(True)
         ba.addWidget(self.lbl_block_alert_body)
-        layout.addWidget(self.block_alert)
+        bp.addWidget(self.block_alert)
 
-        # Block candidate detail fields
-        block_panel = QFrame()
-        block_panel.setObjectName("panel")
-        bp = QVBoxLayout(block_panel)
-        bp.setContentsMargins(14, 12, 14, 12)
-        bp.setSpacing(8)
-        bt = QLabel("Latest block candidate")
-        bt.setObjectName("sectionTitle")
-        bp.addWidget(bt)
         note = QLabel(
             "No payout is shown until the network accepts the block. This area lists candidates only."
         )
@@ -688,21 +691,20 @@ class MainWindow(QMainWindow):
 
         self.block_list = QTextEdit()
         self.block_list.setReadOnly(True)
-        self.block_list.setMinimumHeight(72)
-        self.block_list.setMaximumHeight(110)
+        self.block_list.setMinimumHeight(100)
         self.block_list.setPlaceholderText("No block candidates yet (expected).")
         self.block_list.setFont(QFont("Cascadia Mono", 10))
-        bp.addWidget(self.block_list)
-        layout.addWidget(block_panel)
+        bp.addWidget(self.block_list, 1)
+        tabs.addTab(block_tab, "Block")
 
-        # Share events
-        share_panel = QFrame()
-        share_panel.setObjectName("panel")
-        sp = QVBoxLayout(share_panel)
+        # --- Shares ---
+        share_tab = QWidget()
+        sp = QVBoxLayout(share_tab)
         sp.setContentsMargins(14, 12, 14, 12)
         sp.setSpacing(8)
         sht = QLabel("Shares (pool target — not a block reward)")
-        sht.setObjectName("sectionTitle")
+        sht.setObjectName("tagline")
+        sht.setWordWrap(True)
         sp.addWidget(sht)
 
         share_detail = QFrame()
@@ -733,36 +735,34 @@ class MainWindow(QMainWindow):
 
         self.share_list = QTextEdit()
         self.share_list.setReadOnly(True)
-        self.share_list.setMinimumHeight(72)
-        self.share_list.setMaximumHeight(110)
+        self.share_list.setMinimumHeight(100)
         self.share_list.setPlaceholderText("No shares yet.")
         self.share_list.setFont(QFont("Cascadia Mono", 10))
-        sp.addWidget(self.share_list)
-        layout.addWidget(share_panel)
+        sp.addWidget(self.share_list, 1)
+        tabs.addTab(share_tab, "Shares")
 
-        # Event log
-        log_panel = QFrame()
-        log_panel.setObjectName("panel")
-        lp = QVBoxLayout(log_panel)
+        # --- Event log ---
+        log_tab = QWidget()
+        lp = QVBoxLayout(log_tab)
         lp.setContentsMargins(14, 12, 14, 12)
         lp.setSpacing(8)
-        lt = QLabel("Event log")
-        lt.setObjectName("sectionTitle")
-        lp.addWidget(lt)
         self.event_log = QTextEdit()
         self.event_log.setReadOnly(True)
-        self.event_log.setMinimumHeight(90)
-        self.event_log.setMaximumHeight(140)
-        self.event_log.setPlaceholderText("Jobs, shares, block candidates, and pool replies appear here.")
+        self.event_log.setMinimumHeight(160)
+        self.event_log.setPlaceholderText(
+            "Jobs, shares, block candidates, and pool replies appear here."
+        )
         self.event_log.setFont(QFont("Cascadia Mono", 10))
-        lp.addWidget(self.event_log)
-        layout.addWidget(log_panel)
+        lp.addWidget(self.event_log, 1)
+        tabs.addTab(log_tab, "Event log")
+
+        tabs.setCurrentIndex(0)  # Settings active by default
+        layout.addWidget(tabs, 1)
 
         foot = QLabel(f"Settings file: {settings_file()}")
         foot.setObjectName("statKey")
         foot.setWordWrap(True)
         layout.addWidget(foot)
-        layout.addStretch(1)
 
         self._addr_save_timer = QTimer(self)
         self._addr_save_timer.setSingleShot(True)
@@ -794,8 +794,10 @@ class MainWindow(QMainWindow):
         self._setup_tray()
         self._apply_network_to_ui()
         self._apply_idle_mining_ui()
-        # Always open on network selection (never auto-resume mining / last mine page)
-        self._stack.setCurrentIndex(0)
+        if not bool(self._cfg.get("setup_wizard_done")):
+            self._stack.setCurrentWidget(self._setup_wizard)
+        else:
+            self._stack.setCurrentWidget(self._select_page)
         QTimer.singleShot(50, self._startup_clear_orphans)
         QTimer.singleShot(400, self._maybe_offer_missing_miners)
         # Every launch: check GitHub and ask if a newer signed release exists
@@ -804,6 +806,14 @@ class MainWindow(QMainWindow):
         )
 
     def _build_menu(self) -> None:
+        settings_menu = self.menuBar().addMenu("&Settings")
+        act_settings = QAction("Settings…", self)
+        act_settings.triggered.connect(self._open_settings)
+        settings_menu.addAction(act_settings)
+        act_wiz = QAction("Run setup wizard again…", self)
+        act_wiz.triggered.connect(self._rerun_setup_wizard)
+        settings_menu.addAction(act_wiz)
+
         help_menu = self.menuBar().addMenu("&Help")
         act_how = QAction("How to Use…", self)
         act_how.triggered.connect(self._show_howto)
@@ -901,12 +911,12 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_open_hardware_check(self) -> None:
-        self._stack.setCurrentIndex(1)
+        self._stack.setCurrentWidget(self._hw_page)
         # refresh() shows spinner and scans off the UI thread
         self._hw_page.refresh()
 
     def _on_hardware_back_to_network(self) -> None:
-        self._stack.setCurrentIndex(0)
+        self._stack.setCurrentWidget(self._select_page)
 
     def _on_hardware_continue(self) -> None:
         """Stay on hardware page with spinner → capacity probe → network list."""
@@ -940,13 +950,13 @@ class MainWindow(QMainWindow):
                     if disabled
                     else "Capacity check done — all probed networks look usable."
                 )
-                self._stack.setCurrentIndex(0)
+                self._stack.setCurrentWidget(self._select_page)
                 self._select_page.set_busy(False, done)
 
             def _fail(err: str) -> None:
                 self._hw_page.set_busy(False)
                 self._select_page.apply_blocks(self._network_blocked_map())
-                self._stack.setCurrentIndex(0)
+                self._stack.setCurrentWidget(self._select_page)
                 self._select_page.set_busy(
                     False,
                     f"Capacity check failed: {err}. Keeping last hardware configuration.",
@@ -1136,17 +1146,7 @@ class MainWindow(QMainWindow):
             ready and not blocked and not self.controller.is_running()
         )
         is_xmr = self._network_id == "xmr"
-        is_gpu_managed = self._network_id in ("rvn", "erg")
         is_managed = self._profile.engine_kind == "managed_external"
-        self.cpu_threads.setVisible(is_xmr)
-        self.pause_battery.setVisible(is_xmr)
-        self.btn_pick_gpu.setVisible(is_gpu_managed or self._profile.thermal_source == "gpu_nvidia")
-        bus = self._cfg.get("gpu_bus_id") or ""
-        uuid = self._cfg.get("gpu_uuid") or ""
-        self.lbl_gpu_bus.setText(
-            f"GPU bus={bus or 'auto'} uuid={(uuid[:13] + '…') if uuid else 'auto'}"
-        )
-        self.lbl_gpu_bus.setVisible(is_gpu_managed or self._network_id in ("btc", "bch", "rvn"))
         # Native OpenCL counter not on XMR/RVN/ERG — avoid misleading label
         if is_managed:
             self.lbl_total_k.setText("Total attempts")
@@ -1157,10 +1157,6 @@ class MainWindow(QMainWindow):
             )
         else:
             self.lbl_total_k.setText("Total attempts")
-        for i in range(self.cpu_threads_wrap.count()):
-            w = self.cpu_threads_wrap.itemAt(i).widget()
-            if w:
-                w.setVisible(is_xmr)
         if blocked:
             self.lbl_status.setText(blocked)
         elif not ready:
@@ -1305,7 +1301,7 @@ class MainWindow(QMainWindow):
             return
         # Keep last capacity_blocks (persisted) — do not re-enable disabled nets
         self._select_page.apply_blocks(self._network_blocked_map())
-        self._stack.setCurrentIndex(0)
+        self._stack.setCurrentWidget(self._select_page)
 
     def _set_stop_busy_ui(self, busy: bool) -> None:
         self._stop_busy = busy
@@ -1405,6 +1401,23 @@ class MainWindow(QMainWindow):
     def _on_donate(self) -> None:
         DonateDialog(self).exec()
 
+    @contextmanager
+    def _hold_mine_scroll(self) -> Iterator[None]:
+        """Keep QScrollArea viewport still while focus/enable changes (Start/Stop)."""
+        bar = self._mine_scroll.verticalScrollBar()
+        hbar = self._mine_scroll.horizontalScrollBar()
+        vpos, hpos = bar.value(), hbar.value()
+
+        def _restore() -> None:
+            bar.setValue(vpos)
+            hbar.setValue(hpos)
+
+        try:
+            yield
+        finally:
+            _restore()
+            QTimer.singleShot(0, _restore)
+
     def _persist_form(self) -> None:
         addr = self.address_edit.text().strip()
         by_net = dict(self._cfg.get("address_by_network") or {})
@@ -1414,12 +1427,12 @@ class MainWindow(QMainWindow):
                 "selected_network": self._network_id,
                 "address": addr,
                 "address_by_network": by_net,
-                "intensity": self.intensity.value(),
-                "pause_temp": self.pause_temp.value(),
-                "resume_temp": self.resume_temp.value(),
+                "intensity": int(self._cfg.get("intensity") or 4),
+                "pause_temp": int(self._cfg.get("pause_temp") or 75),
+                "resume_temp": int(self._cfg.get("resume_temp") or 67),
                 "test_mode": self.test_mode.isChecked(),
-                "cpu_thread_limit": self.cpu_threads.value(),
-                "pause_on_battery": self.pause_battery.isChecked(),
+                "cpu_thread_limit": int(self._cfg.get("cpu_thread_limit") or 0),
+                "pause_on_battery": bool(self._cfg.get("pause_on_battery", True)),
                 "allow_mine_without_temp": bool(
                     self._cfg.get("allow_mine_without_temp", False)
                 ),
@@ -1430,6 +1443,10 @@ class MainWindow(QMainWindow):
                 "gpu_uuid": self._cfg.get("gpu_uuid"),
                 "window_width": self.width(),
                 "window_height": self.height(),
+                "scoreboard_overlay_enabled": bool(
+                    self._cfg.get("scoreboard_overlay_enabled", True)
+                ),
+                "setup_wizard_done": bool(self._cfg.get("setup_wizard_done", False)),
             }
         )
         self._cfg = load_settings()
@@ -1447,11 +1464,26 @@ class MainWindow(QMainWindow):
                 self.btn_stats.setText("Open pool page")
             self.btn_stats.setEnabled(True)
             self._stats_url = preview
+    def _intensity_val(self) -> int:
+        return int(self._cfg.get("intensity") or 4)
+
+    def _pause_temp_val(self) -> int:
+        return int(self._cfg.get("pause_temp") or 75)
+
+    def _resume_temp_val(self) -> int:
+        return int(self._cfg.get("resume_temp") or 67)
+
+    def _cpu_threads_val(self) -> int:
+        return int(self._cfg.get("cpu_thread_limit") or 0)
+
+    def _pause_battery_val(self) -> bool:
+        return bool(self._cfg.get("pause_on_battery", True))
+
     def _push_settings(self) -> None:
         self.controller.update_settings(
-            self.intensity.value(),
-            self.pause_temp.value(),
-            self.resume_temp.value(),
+            self._intensity_val(),
+            self._pause_temp_val(),
+            self._resume_temp_val(),
         )
 
     def _allow_mine_without_temp(self) -> bool:
@@ -1693,13 +1725,9 @@ class MainWindow(QMainWindow):
             self._refresh_thermal_unsafe_banner(running_without_temp=True)
 
         try:
-            import os
-
-            ncpu = os.cpu_count() or 1
-            self.cpu_threads.setMaximum(ncpu)
             self.controller.update_cpu_options(
-                cpu_thread_limit=self.cpu_threads.value(),
-                pause_on_battery=self.pause_battery.isChecked(),
+                cpu_thread_limit=self._cpu_threads_val(),
+                pause_on_battery=self._pause_battery_val(),
                 xmrig_donate_level=int(self._cfg.get("xmrig_donate_level") or 1),
             )
             self.controller.gpu_bus_id = str(self._cfg.get("gpu_bus_id") or "")
@@ -1720,11 +1748,15 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, "Could not start", str(exc))
             return
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        self.address_edit.setEnabled(False)
-        self.test_mode.setEnabled(False)
-        self.btn_change_network.setEnabled(False)
+        with self._hold_mine_scroll():
+            # Enable Stop first so focus does not jump past it into Status (scrolls down).
+            self.stop_btn.setEnabled(True)
+            self.start_btn.clearFocus()
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
+            self.start_btn.setEnabled(False)
+            self.address_edit.setEnabled(False)
+            self.test_mode.setEnabled(False)
+            self.btn_change_network.setEnabled(False)
 
     def _on_stop(self) -> None:
         def _after(ok: bool) -> None:
@@ -1785,6 +1817,12 @@ class MainWindow(QMainWindow):
             self.lbl_total.setText(f"{stats.total_hashes:,}")
         self.lbl_time.setText(f"{stats.elapsed:.0f}s")
         self.lbl_shares.setText(f"accepted {stats.accepted} / rejected {stats.rejected}")
+        self._update_scoreboard(
+            int(getattr(stats, "block_candidate_count", 0) or 0),
+            int(stats.accepted or 0),
+            int(stats.rejected or 0),
+            int(stats.total_hashes or 0),
+        )
         self.lbl_engine_fee.setText(
             f"Engine fee shares (not user accepted): {getattr(stats, 'engine_fee_shares', 0)}"
         )
@@ -1983,14 +2021,18 @@ class MainWindow(QMainWindow):
         act_fb.triggered.connect(self._show_feedback)
         act_upd = QAction("Check for Updates…", self)
         act_upd.triggered.connect(lambda: self._check_for_updates(manual=True))
+        self._act_show_scoreboard = QAction("Show scoreboard", self)
+        self._act_show_scoreboard.triggered.connect(self._on_tray_show_scoreboard)
         menu.addAction(act_show)
         menu.addAction(act_hide)
+        menu.addAction(self._act_show_scoreboard)
         menu.addAction(act_how)
         menu.addAction(act_fb)
         menu.addAction(act_upd)
         menu.addSeparator()
         menu.addAction(act_quit)
         self.tray.setContextMenu(menu)
+        self._refresh_scoreboard_tray_action()
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
         self.tray.showMessage(
@@ -2009,12 +2051,107 @@ class MainWindow(QMainWindow):
 
     def raise_to_front(self) -> None:
         """Show and activate the main window (tray click or second-instance launch)."""
+        self._hide_scoreboard_overlay()
         self.showNormal()
         self.raise_()
         self.activateWindow()
 
     def _show_from_tray(self) -> None:
         self.raise_to_front()
+
+    def _scoreboard_overlay_enabled(self) -> bool:
+        return bool(self._cfg.get("scoreboard_overlay_enabled", True))
+
+    def _set_scoreboard_overlay_enabled(self, enabled: bool) -> None:
+        self._cfg["scoreboard_overlay_enabled"] = bool(enabled)
+        save_settings({"scoreboard_overlay_enabled": bool(enabled)})
+        self._refresh_scoreboard_tray_action()
+
+    def _refresh_scoreboard_tray_action(self) -> None:
+        act = getattr(self, "_act_show_scoreboard", None)
+        if act is None:
+            return
+        # Offer re-enable when user dismissed the overlay
+        act.setEnabled(not self._scoreboard_overlay_enabled())
+
+    def _update_scoreboard(
+        self, blocks: int, accepted: int, rejected: int, attempts: int
+    ) -> None:
+        self._last_scoreboard = (blocks, accepted, rejected, attempts)
+        self.scoreboard.update_counts(blocks, accepted, rejected, attempts)
+        if self._scoreboard_overlay is not None:
+            self._scoreboard_overlay.update_counts(blocks, accepted, rejected, attempts)
+
+    def _maybe_show_scoreboard_overlay(self) -> None:
+        if self._tray_exit:
+            return
+        if not self._scoreboard_overlay_enabled():
+            return
+        if self._scoreboard_overlay is None:
+            return
+        b, a, r, t = self._last_scoreboard
+        self._scoreboard_overlay.update_counts(b, a, r, t)
+        self._scoreboard_overlay.show_overlay()
+        self._refresh_scoreboard_tray_action()
+
+    def _hide_scoreboard_overlay(self) -> None:
+        if self._scoreboard_overlay is not None and self._scoreboard_overlay.isVisible():
+            self._scoreboard_overlay.hide()
+
+    def _on_scoreboard_overlay_closed(self) -> None:
+        self._set_scoreboard_overlay_enabled(False)
+        if self.tray is not None and self.tray.isVisible():
+            self.tray.showMessage(
+                APP_NAME,
+                "Scoreboard hidden. Easy Block Finder 4000 is still running in the system tray. "
+                "Tray menu → Show scoreboard to bring it back, or double-click the tray icon to open the window.",
+                QSystemTrayIcon.MessageIcon.Information,
+                6000,
+            )
+            self.tray.setToolTip(
+                f"{APP_NAME} — still running (scoreboard hidden)"
+            )
+
+    def _on_tray_show_scoreboard(self) -> None:
+        self._set_scoreboard_overlay_enabled(True)
+        if not self.isVisible() or self.isMinimized():
+            self._maybe_show_scoreboard_overlay()
+        else:
+            # Main window visible — overlay only while trayed; just re-enable for next hide
+            self._hide_scoreboard_overlay()
+
+    def _open_settings(self) -> None:
+        dlg = SettingsDialog(self._cfg, self)
+        dlg.form.pick_gpu_clicked.connect(self._on_pick_gpu)
+        if dlg.exec():
+            vals = dlg.values()
+            self._cfg.update(vals)
+            save_settings(vals)
+            self._cfg = load_settings()
+            self._push_settings()
+            if self.controller.is_running():
+                self.controller.update_cpu_options(
+                    cpu_thread_limit=self._cpu_threads_val(),
+                    pause_on_battery=self._pause_battery_val(),
+                    xmrig_donate_level=int(self._cfg.get("xmrig_donate_level") or 1),
+                )
+
+    def _on_setup_wizard_finished(self, updates: dict) -> None:
+        self._cfg.update(updates)
+        save_settings(updates)
+        self._cfg = load_settings()
+        self._push_settings()
+        self._stack.setCurrentWidget(self._select_page)
+
+    def _rerun_setup_wizard(self) -> None:
+        idx = self._stack.indexOf(self._setup_wizard)
+        if idx >= 0:
+            self._stack.removeWidget(self._setup_wizard)
+            self._setup_wizard.deleteLater()
+        self._setup_wizard = SetupWizardPage(self._cfg)
+        self._setup_wizard.finished.connect(self._on_setup_wizard_finished)
+        self._stack.insertWidget(0, self._setup_wizard)
+        self._stack.setCurrentWidget(self._setup_wizard)
 
     def _notify(self, title: str, body: str, icon=None) -> None:
         if icon is None:
@@ -2036,14 +2173,14 @@ class MainWindow(QMainWindow):
             self._notify(
                 f"{APP_NAME} — thermal pause",
                 f"GPU {temp}°C: mining paused "
-                f"(threshold {self.pause_temp.value()}°C). Resumes automatically when cooler.",
+                f"(threshold {self._pause_temp_val()}°C). Resumes automatically when cooler.",
                 QSystemTrayIcon.MessageIcon.Warning,
             )
         else:
             self._notify(
                 f"{APP_NAME} — resumed",
                 f"GPU {temp}°C: cooled down, mining restarted "
-                f"(resume ≤ {self.resume_temp.value()}°C).",
+                f"(resume ≤ {self._resume_temp_val()}°C).",
                 QSystemTrayIcon.MessageIcon.Information,
             )
 
@@ -2132,9 +2269,23 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(0, self.hide)
         super().changeEvent(event)
 
+    def hideEvent(self, event) -> None:  # noqa: N802
+        super().hideEvent(event)
+        if self._tray_exit:
+            self._hide_scoreboard_overlay()
+            return
+        # Minimized / closed to tray → optional LED overlay
+        QTimer.singleShot(0, self._maybe_show_scoreboard_overlay)
+
     def closeEvent(self, event) -> None:  # noqa: N802
         self._persist_form()
         if self._tray_exit or self.tray is None:
+            self._hide_scoreboard_overlay()
+            if self._scoreboard_overlay is not None:
+                # Do not treat quit teardown as user dismiss (would persist enabled=false)
+                self._scoreboard_overlay._on_user_close = None
+                self._scoreboard_overlay.close()
+                self._scoreboard_overlay = None
             if self._stop_busy:
                 event.ignore()
                 return

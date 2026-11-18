@@ -35,9 +35,9 @@ DEFAULTS: dict[str, Any] = {
     "address": "",
     "selected_network": "btc",
     "address_by_network": {nid: "" for nid in NETWORK_ORDER},
-    "intensity": 1,
-    "pause_temp": 80,
-    "resume_temp": 70,
+    "intensity": 4,
+    "pause_temp": 75,
+    "resume_temp": 67,
     "test_mode": False,
     "window_width": 760,
     "window_height": 720,
@@ -57,6 +57,10 @@ DEFAULTS: dict[str, Any] = {
     # Last hardware / GPU capacity probe: network_id -> block reason (empty = all clear)
     "capacity_blocks": {},
     "capacity_check_ts": 0.0,
+    # Tray mini LED scoreboard (user can dismiss; re-enable from tray menu)
+    "scoreboard_overlay_enabled": True,
+    # First-run machine setup wizard (intensity / thermal / GPU)
+    "setup_wizard_done": False,
 }
 
 
@@ -93,6 +97,13 @@ def _normalize_loaded(data: dict[str, Any]) -> dict[str, Any]:
         legacy_addr if nid == "btc" else ""
     )
     out["app_donation"] = normalize_app_donation(out.get("app_donation"))
+    # Existing installs (pre-wizard): do not force first-run wizard again
+    if "setup_wizard_done" not in data:
+        has_addr = bool(str(out.get("address") or "").strip()) or any(
+            str(v or "").strip() for v in (out.get("address_by_network") or {}).values()
+        )
+        if out.get("network_wizard_done") or has_addr:
+            out["setup_wizard_done"] = True
     return out
 
 

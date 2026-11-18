@@ -19,3 +19,28 @@ def test_save_and_load_address(tmp_path, monkeypatch):
     assert data["intensity"] == 3
     raw = json.loads(path.read_text(encoding="utf-8"))
     assert "address" in raw
+
+
+def test_existing_user_keeps_intensity_and_skips_wizard():
+    """Pre-1.0.8 settings must not reset intensity or force the setup wizard."""
+    old = {
+        "intensity": 1,
+        "pause_temp": 80,
+        "resume_temp": 70,
+        "address": "bc1qexampleaddress0000000000000000000",
+        "network_wizard_done": True,
+    }
+    data = ss._normalize_loaded(old)
+    assert data["intensity"] == 1
+    assert data["pause_temp"] == 80
+    assert data["resume_temp"] == 70
+    assert data["setup_wizard_done"] is True
+    assert data["scoreboard_overlay_enabled"] is True
+
+
+def test_fresh_install_gets_wizard_and_new_defaults():
+    data = ss._normalize_loaded({})
+    assert data["setup_wizard_done"] is False
+    assert data["intensity"] == 4
+    assert data["pause_temp"] == 75
+    assert data["resume_temp"] == 67

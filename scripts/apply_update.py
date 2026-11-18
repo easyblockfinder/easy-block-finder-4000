@@ -19,8 +19,9 @@ import sys
 import time
 from pathlib import Path
 
-# Skip replacing these relative paths inside the install tree
-SKIP_NAMES = {".git", ".venv", "venv", "__pycache__", ".deps_ok"}
+# Skip replacing these relative paths inside the install tree.
+# "runtime" = bundled embeddable CPython from the Setup/ZIP — keep across updates.
+SKIP_NAMES = {".git", ".venv", "venv", "__pycache__", ".deps_ok", "runtime"}
 
 
 def _log(msg: str) -> None:
@@ -70,6 +71,26 @@ def _copy_tree(src: Path, dst: Path) -> None:
             s = Path(root) / name
             d = target_root / name
             shutil.copy2(s, d)
+
+
+def _ensure_runtime_from_payload(payload_dir: Path, install_dir: Path) -> None:
+    """
+    Keep an existing bundled runtime across updates, but install it once when
+    migrating from an older ZIP that had no runtime\\ folder.
+    """
+    src = payload_dir / "runtime"
+    dst = install_dir / "runtime"
+    marker = dst / "python.exe"
+    if marker.is_file():
+        _log("runtime: keep existing bundled Python")
+        return
+    if not (src / "python.exe").is_file():
+        _log("runtime: none in payload (legacy package)")
+        return
+    if dst.exists():
+        shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(src, dst)
+    _log("runtime: installed bundled Python from update payload")
 
 
 def backup_install(install_dir: Path, backup_dir: Path) -> None:
@@ -125,8 +146,15 @@ def _win_no_window_flags() -> int:
     )
 
 
-def _pythonw() -> str:
-    """Prefer pythonw.exe so post-update restart never leaves a console."""
+def _pythonw(cwd: Path | None = None) -> str:
+    """Prefer bundled runtime pythonw, then current interpreter's pythonw."""
+    if cwd is not None:
+        bundled = cwd / "runtime" / "pythonw.exe"
+        if bundled.is_file():
+            return str(bundled)
+        bundled_py = cwd / "runtime" / "python.exe"
+        if bundled_py.is_file():
+            return str(bundled_py)
     exe = sys.executable
     if sys.platform == "win32" and exe.lower().endswith("python.exe"):
         candidate = exe[:-10] + "pythonw.exe"
@@ -148,6 +176,9 @@ def restart_app(job: dict) -> None:
     main_py = cwd / "src" / "main.py"
     env = os.environ.copy()
     env["PYTHONPATH"] = str(cwd / "src")
+    runtime_dir = cwd / "runtime"
+    if runtime_dir.is_dir():
+        env["PATH"] = str(runtime_dir) + os.pathsep + str(runtime_dir / "Scripts") + os.pathsep + env.get("PATH", "")
 
     if main_py.is_file():
         kwargs: dict = {
@@ -160,7 +191,7 @@ def restart_app(job: dict) -> None:
         }
         if sys.platform == "win32":
             kwargs["creationflags"] = _win_no_window_flags()
-        subprocess.Popen([_pythonw(), str(main_py)], **kwargs)
+        subprocess.Popen([_pythonw(cwd), str(main_py)], **kwargs)
         return
 
     # Last resort: start.bat, still hidden on Windows
@@ -217,6 +248,7 @@ def main() -> int:
         backup_install(install_dir, backup_dir)
         _log(f"backup ok -> {backup_dir}")
         _copy_tree(payload_dir, install_dir)
+        _ensure_runtime_from_payload(payload_dir, install_dir)
         _log("copy ok")
     except Exception as exc:
         _log(f"ERROR during update: {exc}; restoring backup")
