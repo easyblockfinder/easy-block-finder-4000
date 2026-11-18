@@ -44,7 +44,11 @@ from ui.busy_indicator import BusyIndicator
 from ui.donate_dialog import DonateDialog
 from ui.hardware_detect_page import HardwareDetectPage
 from ui.network_select import NetworkSelectPage
-from mining.best_hash import SUPPORTED_BEST_HASH_NETWORKS, idle_difficulty_row
+from mining.best_hash import (
+    SUPPORTED_BEST_HASH_NETWORKS,
+    format_diff_short,
+    idle_difficulty_row,
+)
 from mining.best_hash_store import load_best_hash_state
 from ui.scoreboard import ScoreboardOverlayWindow, ScoreboardWidget
 from ui.settings_dialog import SettingsDialog
@@ -364,6 +368,7 @@ class MainWindow(QMainWindow):
         self._last_scoreboard_temp: int | None = None
         self._last_net_diff: float | None = None
         self._last_best_diff: float | None = None
+        self._last_accepted_best_diff: float | None = None
         self._scoreboard_overlay: ScoreboardOverlayWindow | None = None
         self._quit_busy_host: QWidget | None = None
         self._quit_busy: BusyIndicator | None = None
@@ -585,6 +590,8 @@ class MainWindow(QMainWindow):
         self.lbl_time_k, self.lbl_time = _stat_pair("Elapsed")
         self.lbl_shares_k, self.lbl_shares = _stat_pair("Share")
         self.lbl_diff_k, self.lbl_diff = _stat_pair("Server set_difficulty")
+        self.lbl_gpu_best_k, self.lbl_gpu_best = _stat_pair("GPU best difficulty")
+        self.lbl_acc_best_k, self.lbl_acc_best = _stat_pair("Accepted best difficulty")
         self.lbl_temp_k, self.lbl_temp = _stat_pair("Temperature")
         self.lbl_job_k, self.lbl_job = _stat_pair("Current job ID", mono=True)
         self.lbl_payout_k, self.lbl_payout = _stat_pair("Payout address", mono=True)
@@ -598,6 +605,8 @@ class MainWindow(QMainWindow):
             (self.lbl_time_k, self.lbl_time),
             (self.lbl_shares_k, self.lbl_shares),
             (self.lbl_diff_k, self.lbl_diff),
+            (self.lbl_gpu_best_k, self.lbl_gpu_best),
+            (self.lbl_acc_best_k, self.lbl_acc_best),
             (self.lbl_temp_k, self.lbl_temp),
             (self.lbl_job_k, self.lbl_job),
             (self.lbl_payout_k, self.lbl_payout),
@@ -609,6 +618,18 @@ class MainWindow(QMainWindow):
             grid.addWidget(v, r * 2 + 1, c * 2, 1, 2)
 
         st_outer.addLayout(grid)
+
+        self.lbl_accepted_best_banner = QLabel("")
+        self.lbl_accepted_best_banner.setObjectName("acceptedBestBanner")
+        self.lbl_accepted_best_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_accepted_best_banner.setVisible(False)
+        self.lbl_accepted_best_banner.setStyleSheet(
+            "color: #1b5e20; font-weight: 700; padding: 4px;"
+        )
+        st_outer.addWidget(self.lbl_accepted_best_banner)
+        self._accepted_best_banner_timer = QTimer(self)
+        self._accepted_best_banner_timer.setSingleShot(True)
+        self._accepted_best_banner_timer.timeout.connect(self._hide_accepted_best_banner)
 
         wk = QLabel("Last kernel")
         wk.setObjectName("statKey")
@@ -2160,14 +2181,54 @@ class MainWindow(QMainWindow):
         """Idle startup / network switch: show stored best for current network."""
         self._last_net_diff = None
         self._last_best_diff = None
+        self._last_accepted_best_diff = None
+        gpu_diff = None
+        acc_diff = None
         if self._difficulty_row_visible():
             try:
-                rec = load_best_hash_state()["records"].get(self._network_id)
+                net_rec = load_best_hash_state()["records"].get(self._network_id)
             except Exception:
-                rec = None
-            net, best = idle_difficulty_row(rec.difficulty if rec is not None else None)
+                net_rec = None
+            if net_rec is not None:
+                if net_rec.gpu_best is not None:
+                    gpu_diff = net_rec.gpu_best.difficulty
+                if net_rec.accepted_best is not None:
+                    acc_diff = net_rec.accepted_best.difficulty
+            net, best = idle_difficulty_row(gpu_diff)
             self._last_net_diff, self._last_best_diff = net, best
+            self._last_accepted_best_diff = acc_diff
         self._push_difficulty_row()
+        self._set_status_best_labels(gpu_diff, acc_diff, visible=self._difficulty_row_visible())
+
+    def _set_status_best_labels(
+        self,
+        gpu_diff: float | None,
+        acc_diff: float | None,
+        *,
+        visible: bool,
+    ) -> None:
+        for w in (
+            self.lbl_gpu_best_k,
+            self.lbl_gpu_best,
+            self.lbl_acc_best_k,
+            self.lbl_acc_best,
+        ):
+            w.setVisible(visible)
+        if not visible:
+            return
+        self.lbl_gpu_best.setText(format_diff_short(gpu_diff))
+        self.lbl_acc_best.setText(format_diff_short(acc_diff))
+
+    def _hide_accepted_best_banner(self) -> None:
+        self.lbl_accepted_best_banner.setVisible(False)
+        self.lbl_accepted_best_banner.setText("")
+        self.lbl_acc_best.setStyleSheet("")
+
+    def _celebrate_accepted_best(self) -> None:
+        self.lbl_accepted_best_banner.setText("NEW ACCEPTED BEST")
+        self.lbl_accepted_best_banner.setVisible(True)
+        self.lbl_acc_best.setStyleSheet("color: #2e7d32; font-weight: 700;")
+        self._accepted_best_banner_timer.start(1600)
 
     def _apply_best_stats(self, stats: MiningStats) -> None:
         if self._difficulty_row_visible():
@@ -2177,11 +2238,24 @@ class MainWindow(QMainWindow):
                 self._last_net_diff = net
             if best is not None:
                 self._last_best_diff = best
+            gpu_live = getattr(stats, "best_difficulty", None)
+            acc_live = getattr(stats, "accepted_best_difficulty", None)
+            if acc_live is not None:
+                self._last_accepted_best_diff = acc_live
+            self._set_status_best_labels(
+                gpu_live if gpu_live is not None else self._last_best_diff,
+                acc_live if acc_live is not None else self._last_accepted_best_diff,
+                visible=True,
+            )
+        else:
+            self._set_status_best_labels(None, None, visible=False)
         self._push_difficulty_row()
         if getattr(stats, "best_record_broken", False) and self._difficulty_row_visible():
             self.scoreboard.celebrate_record()
             if self._scoreboard_overlay is not None:
                 self._scoreboard_overlay.celebrate_record()
+        if getattr(stats, "accepted_record_broken", False) and self._difficulty_row_visible():
+            self._celebrate_accepted_best()
 
     def _update_scoreboard_temp(self, temp_c: int | None) -> None:
         self._last_scoreboard_temp = temp_c

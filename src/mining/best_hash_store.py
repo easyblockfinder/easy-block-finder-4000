@@ -6,7 +6,7 @@ import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from app_meta import APP_DATA_DIRNAME
 from mining.best_hash import (
@@ -17,6 +17,7 @@ from mining.best_hash import (
 )
 
 DEFAULT_MODE = "gpu_batch"
+BestKind = Literal["gpu", "accepted"]
 
 
 class BestHashLoadError(Exception):
@@ -38,6 +39,12 @@ class BestHashRecord:
     found_at_iso: str
 
 
+@dataclass
+class NetworkBestRecords:
+    gpu_best: BestHashRecord | None = None
+    accepted_best: BestHashRecord | None = None
+
+
 def _local_app_data() -> Path:
     return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
 
@@ -51,7 +58,7 @@ def _store_path() -> Path:
 def _record_from_dict(raw: dict[str, Any]) -> BestHashRecord | None:
     try:
         nd = raw.get("network_difficulty_at_time")
-        return BestHashRecord(
+        rec = BestHashRecord(
             hash_be_hex=str(raw["hash_be_hex"]),
             difficulty=float(raw["difficulty"]),
             nonce_hex=str(raw["nonce_hex"]),
@@ -60,8 +67,27 @@ def _record_from_dict(raw: dict[str, Any]) -> BestHashRecord | None:
             network_difficulty_at_time=float(nd) if nd is not None else None,
             found_at_iso=str(raw["found_at_iso"]),
         )
+        hash_be_hex_to_int(rec.hash_be_hex)
+        return rec
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def _network_from_dict(raw: dict[str, Any]) -> NetworkBestRecords | None:
+    """Parse new {gpu_best, accepted_best} or legacy flat BestHashRecord → gpu_best."""
+    if "gpu_best" in raw or "accepted_best" in raw:
+        gpu = raw.get("gpu_best")
+        acc = raw.get("accepted_best")
+        return NetworkBestRecords(
+            gpu_best=_record_from_dict(gpu) if isinstance(gpu, dict) else None,
+            accepted_best=_record_from_dict(acc) if isinstance(acc, dict) else None,
+        )
+    if "hash_be_hex" in raw:
+        legacy = _record_from_dict(raw)
+        if legacy is None:
+            return None
+        return NetworkBestRecords(gpu_best=legacy, accepted_best=None)
+    return None
 
 
 def quarantine_corrupt_store() -> Path | None:
@@ -81,7 +107,7 @@ def quarantine_corrupt_store() -> Path | None:
 def load_best_hash_state(*, strict: bool = False) -> dict:
     """strict=True raises BestHashLoadError on read/parse failure instead of returning empty."""
     path = _store_path()
-    empty = {"mode": DEFAULT_MODE, "records": {}}
+    empty: dict[str, Any] = {"mode": DEFAULT_MODE, "records": {}}
     if not path.is_file():
         return empty
     try:
@@ -90,7 +116,7 @@ def load_best_hash_state(*, strict: bool = False) -> dict:
         if strict:
             raise BestHashLoadError(str(exc), corrupt=False) from exc
         return empty
-    except (ValueError, TypeError) as exc:  # JSONDecodeError/UnicodeDecodeError ⊂ ValueError
+    except (ValueError, TypeError) as exc:
         if strict:
             raise BestHashLoadError(str(exc), corrupt=True) from exc
         return empty
@@ -100,32 +126,36 @@ def load_best_hash_state(*, strict: bool = False) -> dict:
         return empty
     mode = str(data.get("mode") or DEFAULT_MODE)
     raw_records = data.get("records")
-    records: dict[str, BestHashRecord] = {}
+    records: dict[str, NetworkBestRecords] = {}
     if isinstance(raw_records, dict):
         for network_id, item in raw_records.items():
             if network_id not in SUPPORTED_BEST_HASH_NETWORKS:
                 continue
             if not isinstance(item, dict):
                 continue
-            rec = _record_from_dict(item)
-            if rec is None:
+            net = _network_from_dict(item)
+            if net is None:
                 continue
-            try:
-                hash_be_hex_to_int(rec.hash_be_hex)
-            except ValueError:
+            if net.gpu_best is None and net.accepted_best is None:
                 continue
-            records[str(network_id)] = rec
+            records[str(network_id)] = net
     return {"mode": mode, "records": records}
 
 
-def save_best_hash_state(mode: str, records: dict[str, BestHashRecord]) -> None:
+def save_best_hash_state(mode: str, records: dict[str, NetworkBestRecords]) -> None:
     path = _store_path()
-    payload = {
-        "mode": mode,
-        "records": {
-            nid: asdict(rec) for nid, rec in sorted(records.items()) if nid in SUPPORTED_BEST_HASH_NETWORKS
-        },
-    }
+    out_records: dict[str, Any] = {}
+    for nid, net in sorted(records.items()):
+        if nid not in SUPPORTED_BEST_HASH_NETWORKS:
+            continue
+        entry: dict[str, Any] = {
+            "gpu_best": asdict(net.gpu_best) if net.gpu_best else None,
+            "accepted_best": asdict(net.accepted_best) if net.accepted_best else None,
+        }
+        if entry["gpu_best"] is None and entry["accepted_best"] is None:
+            continue
+        out_records[nid] = entry
+    payload = {"mode": mode, "records": out_records}
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     fd, tmp_name = tempfile.mkstemp(prefix="best_hash_", suffix=".json", dir=path.parent)
     tmp_path = Path(tmp_name)
@@ -150,17 +180,27 @@ def upsert_record_if_better(
     nbits: str,
     network_difficulty_at_time: float | None,
     found_at_iso: str | None = None,
+    kind: BestKind = "gpu",
 ) -> BestHashRecord | None:
     if network_id not in SUPPORTED_BEST_HASH_NETWORKS:
+        return None
+    if kind not in ("gpu", "accepted"):
         return None
     try:
         candidate_int = hash_be_hex_to_int(hash_be_hex)
     except ValueError:
         return None
-    state = load_best_hash_state(strict=True)  # raises BestHashLoadError: never overwrite
+    state = load_best_hash_state(strict=True)
     mode = state["mode"]
-    records: dict[str, BestHashRecord] = dict(state["records"])
-    existing = records.get(network_id)
+    records: dict[str, NetworkBestRecords] = {
+        nid: NetworkBestRecords(
+            gpu_best=net.gpu_best,
+            accepted_best=net.accepted_best,
+        )
+        for nid, net in state["records"].items()
+    }
+    net = records.get(network_id) or NetworkBestRecords()
+    existing = net.gpu_best if kind == "gpu" else net.accepted_best
     existing_int = None
     if existing:
         try:
@@ -179,6 +219,10 @@ def upsert_record_if_better(
         network_difficulty_at_time=network_difficulty_at_time,
         found_at_iso=found_at,
     )
-    records[network_id] = record
+    if kind == "gpu":
+        net.gpu_best = record
+    else:
+        net.accepted_best = record
+    records[network_id] = net
     save_best_hash_state(mode, records)
     return record

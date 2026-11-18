@@ -19,6 +19,7 @@ from mining.best_hash import (  # noqa: E402
 )
 from mining.best_hash_store import (  # noqa: E402
     BestHashLoadError,
+    BestHashRecord,
     load_best_hash_state,
     upsert_record_if_better,
 )
@@ -68,7 +69,7 @@ def test_verify_best_candidate_matches_and_rejects():
 
 def test_cpu_verify_mismatch_not_persisted(ctl):
     snap = _snap()
-    bogus = "00" * 6 + "11" * 26  # claims a great hash that header+nonce does not produce
+    bogus = "00" * 6 + "11" * 26
     ctl._track_best_hash(snap, _result(bogus, 7), [])
     assert load_best_hash_state()["records"] == {}
     assert ctl._best_record is None
@@ -78,15 +79,14 @@ def test_cpu_verify_mismatch_not_persisted(ctl):
 def test_verified_candidate_persisted_without_celebration_first_time(ctl):
     snap = _snap()
     ctl._track_best_hash(snap, _result(_good_hash(snap, 7), 7), [])
-    rec = load_best_hash_state()["records"]["btc"]
+    rec = load_best_hash_state()["records"]["btc"].gpu_best
     assert rec.nonce_hex == "00000007"
     assert ctl._best_record is not None
-    assert ctl._best_broken_pending is False  # first record: no celebration
+    assert ctl._best_broken_pending is False
 
 
 def test_worse_than_cache_skips_verify_and_disk(ctl, monkeypatch):
     snap = _snap()
-    # Seed cache with an unbeatably good record (hash int 1).
     ctl._best_record = upsert_record_if_better(
         "btc",
         hash_be_hex="00" * 31 + "01",
@@ -94,6 +94,7 @@ def test_worse_than_cache_skips_verify_and_disk(ctl, monkeypatch):
         job_id="x",
         nbits="1d00ffff",
         network_difficulty_at_time=1.0,
+        kind="gpu",
     )
     import worker.controller as wc
 
@@ -114,31 +115,71 @@ def test_improvement_after_existing_record_celebrates(ctl):
         job_id="x",
         nbits="1d00ffff",
         network_difficulty_at_time=1.0,
+        kind="gpu",
     )
     ctl._track_best_hash(snap, _result(_good_hash(snap, 9), 9), [])
     assert ctl._best_broken_pending is True
-    assert load_best_hash_state()["records"]["btc"].nonce_hex == "00000009"
+    assert load_best_hash_state()["records"]["btc"].gpu_best.nonce_hex == "00000009"
 
 
-def test_accepted_only_pick_verifies_before_upsert(tmp_path, monkeypatch):
+def test_accepted_best_updates_separately(ctl):
+    snap = _snap()
+    hx = _good_hash(snap, 11)
+    hdr = snap.header_for_nonce(11)
+    ctl._track_accepted_best(
+        {
+            "hash": hx,
+            "nonce_hex": "0000000b",
+            "job_id": "jobA",
+            "nbits": "1d00ffff",
+            "header80": hdr.hex(),
+        }
+    )
+    net = load_best_hash_state()["records"]["btc"]
+    assert net.accepted_best is not None
+    assert net.accepted_best.nonce_hex == "0000000b"
+    assert net.gpu_best is None
+    assert ctl._accepted_broken_pending is False  # first accepted: no celebration
+
+
+def test_accepted_best_improvement_celebrates(ctl):
+    snap = _snap()
+    # Weak baseline on disk + in cache
+    weak = upsert_record_if_better(
+        "btc",
+        hash_be_hex="ff" * 32,
+        nonce_hex="0",
+        job_id="x",
+        nbits="1d00ffff",
+        network_difficulty_at_time=1.0,
+        kind="accepted",
+    )
+    assert weak is not None
+    ctl._accepted_best_record = weak
+    hx = _good_hash(snap, 11)
+    hdr = snap.header_for_nonce(11)
+    ctl._track_accepted_best(
+        {
+            "hash": hx,
+            "nonce_hex": "0000000b",
+            "job_id": "jobA",
+            "nbits": "1d00ffff",
+            "header80": hdr.hex(),
+        }
+    )
+    assert ctl._accepted_broken_pending is True
+    assert load_best_hash_state()["records"]["btc"].accepted_best.hash_be_hex == hx
+
+
+def test_accepted_only_mode_skips_gpu_track(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("EBF_BEST_HASH_MODE", "accepted_only")
     c = MiningController()
     c.network_id = "btc"
     c._load_best_into_stats("btc")
     snap = _snap()
-    good5, good6 = _good_hash(snap, 5), _good_hash(snap, 6)
-    forged = "00" * 7 + "11" * 25  # smaller than both real hashes but unverifiable
-    verified = [
-        {"hash_be_hex": good5, "nonce": 5, "nonce_hex": "00000005"},
-        {"hash_be_hex": good6, "nonce": 6, "nonce_hex": "00000006"},
-        {"hash_be_hex": forged, "nonce": 8, "nonce_hex": "00000008"},
-    ]
-    c._track_best_hash(snap, _result(None, None), verified)
-    # forged wins pick, fails verify → nothing persisted
+    c._track_best_hash(snap, _result(_good_hash(snap, 5), 5), [])
     assert load_best_hash_state()["records"] == {}
-    c._track_best_hash(snap, _result(None, None), verified[:2])
-    assert load_best_hash_state()["records"]["btc"].hash_be_hex in (good5, good6)
 
 
 def _store_file(tmp_path: Path) -> Path:

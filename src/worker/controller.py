@@ -28,7 +28,6 @@ from mining.best_hash import (
     hash_be_hex_to_int,
     is_better_hash,
     network_difficulty_from_nbits,
-    pick_best_candidate_hex,
     verify_best_candidate,
 )
 from mining.best_hash_store import (
@@ -116,9 +115,12 @@ class MiningStats:
     thermal_source: str = ""
     network_id: str = "btc"
     network_difficulty: Optional[float] = None
-    best_difficulty: Optional[float] = None
+    best_difficulty: Optional[float] = None  # GPU batch personal best
     best_hash_be_hex: Optional[str] = None
     best_record_broken: bool = False  # one-shot UI edge; cleared after emit
+    accepted_best_difficulty: Optional[float] = None
+    accepted_best_hash_be_hex: Optional[str] = None
+    accepted_record_broken: bool = False  # one-shot Status celebration
     best_hash_mode: str = "gpu_batch"
 
 
@@ -154,8 +156,10 @@ class MiningController:
         self._profile: NetworkProfile = get_profile("btc")
         self._best_mode_cache: Optional[str] = None
         self._best_broken_pending = False
-        # In-memory best record for the active network (loaded once per start/switch).
-        self._best_record: Optional[BestHashRecord] = None
+        self._accepted_broken_pending = False
+        # In-memory bests for the active network (loaded once per start/switch).
+        self._best_record: Optional[BestHashRecord] = None  # GPU best
+        self._accepted_best_record: Optional[BestHashRecord] = None
         self._best_store_ok = True  # False after load failure → skip writes
         self._start_time = 0.0
         self._hash_window: list[tuple[float, float, int]] = []
@@ -612,12 +616,17 @@ class MiningController:
         if self._block_store.last_error:
             self.stats.block_store_error = self._block_store.last_error
         if self.on_stats:
+            overrides: dict[str, Any] = {}
             if self._best_broken_pending:
-                # Snapshot so the one-shot flag survives queued cross-thread delivery.
                 self._best_broken_pending = False
-                snap = replace(self.stats, best_record_broken=True)
+                overrides["best_record_broken"] = True
                 self.stats.best_record_broken = False
-                self.on_stats(snap)
+            if self._accepted_broken_pending:
+                self._accepted_broken_pending = False
+                overrides["accepted_record_broken"] = True
+                self.stats.accepted_record_broken = False
+            if overrides:
+                self.on_stats(replace(self.stats, **overrides))
             else:
                 self.on_stats(self.stats)
 
@@ -643,13 +652,17 @@ class MiningController:
         st.best_difficulty = None
         st.best_hash_be_hex = None
         st.best_record_broken = False
+        st.accepted_best_difficulty = None
+        st.accepted_best_hash_be_hex = None
+        st.accepted_record_broken = False
+        self._best_record = None
+        self._accepted_best_record = None
         if nid not in SUPPORTED_BEST_HASH_NETWORKS:
             return
         st.best_hash_mode = self._best_hash_mode()
-        self._best_record = None
         self._best_store_ok = True
         try:
-            rec = load_best_hash_state(strict=True)["records"].get(nid)
+            net = load_best_hash_state(strict=True)["records"].get(nid)
         except BestHashLoadError as exc:
             if exc.corrupt:
                 bak = quarantine_corrupt_store()
@@ -658,17 +671,24 @@ class MiningController:
             else:
                 log.warning("best hash store unreadable (%s); persistence disabled", exc)
                 self._best_store_ok = False
-            rec = None
+            net = None
         except Exception as exc:
             log.warning("best hash load failed (%s); persistence disabled", exc)
             self._best_store_ok = False
-            rec = None
-        self._best_record = rec
-        if rec:
-            st.best_difficulty = rec.difficulty
-            st.best_hash_be_hex = rec.hash_be_hex
+            net = None
+        if net is None:
+            return
+        self._best_record = net.gpu_best
+        self._accepted_best_record = net.accepted_best
+        if net.gpu_best:
+            st.best_difficulty = net.gpu_best.difficulty
+            st.best_hash_be_hex = net.gpu_best.hash_be_hex
+        if net.accepted_best:
+            st.accepted_best_difficulty = net.accepted_best.difficulty
+            st.accepted_best_hash_be_hex = net.accepted_best.hash_be_hex
 
     def _track_best_hash(self, snap: Any, result: Any, verified_list: list[dict]) -> None:
+        """Update GPU personal best from batch winner (gpu_batch mode only)."""
         nid = self.network_id
         if nid not in SUPPORTED_BEST_HASH_NETWORKS:
             return
@@ -678,41 +698,27 @@ class MiningController:
             self.stats.network_difficulty = None
         mode = self._best_hash_mode()
         self.stats.best_hash_mode = mode
-        candidates: list[str] = []
-        nonce_by_hex: dict[str, str] = {}
-        nonce_int_by_hex: dict[str, int] = {}
-        if mode == "gpu_batch" and result.best_hash_be_hex and result.best_nonce is not None:
-            hx = result.best_hash_be_hex
-            candidates.append(hx)
-            nonce_by_hex[hx] = f"{int(result.best_nonce):08x}"
-            nonce_int_by_hex[hx] = int(result.best_nonce)
-        if mode == "accepted_only":
-            for v in verified_list:
-                hx = str(v.get("hash_be_hex") or v.get("hash_hex") or "").strip().lower()
-                if hx:
-                    candidates.append(hx)
-                    nonce_by_hex[hx] = str(
-                        v.get("nonce_hex") or nonce_to_submit_hex(int(v["nonce"]))
-                    )
-                    nonce_int_by_hex[hx] = int(v["nonce"])
-        cand = pick_best_candidate_hex(candidates)
-        if not cand:
+        if mode != "gpu_batch":
             return
+        if not (result.best_hash_be_hex and result.best_nonce is not None):
+            return
+        cand = str(result.best_hash_be_hex).strip().lower()
+        nonce_hex = f"{int(result.best_nonce):08x}"
+        nonce_int = int(result.best_nonce)
         if not self._best_store_ok:
             return
-        # Only touch disk / re-hash when strictly better than the in-memory record.
         cached = self._best_record
         try:
             cached_int = hash_be_hex_to_int(cached.hash_be_hex) if cached else None
         except ValueError:
             cached_int = None
-        if not is_better_hash(hash_be_hex_to_int(cand), cached_int):
+        try:
+            cand_int = hash_be_hex_to_int(cand)
+        except ValueError:
             return
-        # CPU-verify the reported digest before persisting (improve path only).
-        nonce_int = nonce_int_by_hex.get(cand)
-        if nonce_int is None or not verify_best_candidate(
-            snap.header_for_nonce(nonce_int), cand
-        ):
+        if not is_better_hash(cand_int, cached_int):
+            return
+        if not verify_best_candidate(snap.header_for_nonce(nonce_int), cand):
             log.warning("best hash candidate failed CPU verify; discarded (nonce=%s)", nonce_int)
             return
         had_previous = cached is not None
@@ -720,10 +726,11 @@ class MiningController:
             rec = upsert_record_if_better(
                 nid,
                 hash_be_hex=cand,
-                nonce_hex=nonce_by_hex.get(cand, ""),
+                nonce_hex=nonce_hex,
                 job_id=str(snap.job_id),
                 nbits=str(snap.nbits),
                 network_difficulty_at_time=self.stats.network_difficulty,
+                kind="gpu",
             )
         except BestHashLoadError as exc:
             log.warning("best hash store unreadable; write skipped: %s", exc)
@@ -736,9 +743,64 @@ class MiningController:
             self._best_record = rec
             self.stats.best_difficulty = rec.difficulty
             self.stats.best_hash_be_hex = rec.hash_be_hex
-            if had_previous:  # first-ever record establishes baseline, no celebration
+            if had_previous:
                 self.stats.best_record_broken = True
                 self._best_broken_pending = True
+
+    def _track_accepted_best(self, entry: dict[str, Any]) -> None:
+        """Update accepted-share personal best after pool ACCEPTED (user shares only)."""
+        nid = self.network_id
+        if nid not in SUPPORTED_BEST_HASH_NETWORKS:
+            return
+        if not self._best_store_ok:
+            return
+        hx = str(entry.get("hash") or "").strip().lower()
+        if not hx:
+            return
+        try:
+            cand_int = hash_be_hex_to_int(hx)
+        except ValueError:
+            return
+        cached = self._accepted_best_record
+        try:
+            cached_int = hash_be_hex_to_int(cached.hash_be_hex) if cached else None
+        except ValueError:
+            cached_int = None
+        if not is_better_hash(cand_int, cached_int):
+            return
+        header_hex = str(entry.get("header80") or "")
+        try:
+            header = bytes.fromhex(header_hex) if header_hex else b""
+        except ValueError:
+            header = b""
+        if header and not verify_best_candidate(header, hx):
+            log.warning("accepted best failed CPU verify; discarded nonce=%s", entry.get("nonce_hex"))
+            return
+        had_previous = cached is not None
+        try:
+            rec = upsert_record_if_better(
+                nid,
+                hash_be_hex=hx,
+                nonce_hex=str(entry.get("nonce_hex") or ""),
+                job_id=str(entry.get("job_id") or ""),
+                nbits=str(entry.get("nbits") or ""),
+                network_difficulty_at_time=self.stats.network_difficulty,
+                kind="accepted",
+            )
+        except BestHashLoadError as exc:
+            log.warning("accepted best store unreadable; write skipped: %s", exc)
+            self._best_store_ok = False
+            return
+        except Exception as exc:
+            log.warning("accepted best persist failed: %s", exc)
+            return
+        if rec:
+            self._accepted_best_record = rec
+            self.stats.accepted_best_difficulty = rec.difficulty
+            self.stats.accepted_best_hash_be_hex = rec.hash_be_hex
+            if had_previous:
+                self.stats.accepted_record_broken = True
+                self._accepted_broken_pending = True
 
     def _run(self, session: int) -> None:
         try:
@@ -1806,6 +1868,7 @@ class MiningController:
                     f"Pool: ACCEPTED id={req_id} session={session_id} "
                     f"job={entry.get('job_id')} nonce={entry.get('nonce_hex')} (not a payout)"
                 )
+                self._track_accepted_best(entry)
         else:
             self.stats.rejected += 1
             entry["status"] = f"pool_response (rejected: {msg})"
@@ -2128,6 +2191,7 @@ class MiningController:
             "ntime": ntime,
             "difficulty": snap.difficulty,
             "diff_at_notify": snap.diff_at_notify,
+            "nbits": snap.nbits,
             "share_target": snap.share_target_value,
             "merkle_root": verified.get("merkle_root_hex"),
             "header80": header_hex,
