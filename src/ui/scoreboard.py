@@ -290,10 +290,7 @@ class ScoreboardOverlayWindow(QWidget):
         self._closing_by_user = False
         # Session-only: after the user drags, keep that spot until app restart.
         self._user_placed = False
-        self._drag_origin: QPoint | None = None
         self._drag_offset: QPoint | None = None
-        self._drag_moved = False
-        self._drag_from_close = False
 
         self.setWindowFlags(
             Qt.WindowType.Tool
@@ -312,12 +309,17 @@ class ScoreboardOverlayWindow(QWidget):
         shell_l.setContentsMargins(5, 3, 5, 5)
         shell_l.setSpacing(3)
 
-        top = QHBoxLayout()
+        # Title bar only: drag here; never opens the main window.
+        self.title_bar = QWidget()
+        self.title_bar.setObjectName("overlayTitleBar")
+        self.title_bar.setCursor(Qt.CursorShape.SizeAllCursor)
+        top = QHBoxLayout(self.title_bar)
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(4)
         tip = QLabel("EBF")
         tip.setObjectName("casioTitle")
         tip.setStyleSheet("font-size: 8px; font-weight: 700;")
+        tip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         top.addWidget(tip, 0)
 
         self.diff_title = QLabel("")
@@ -326,6 +328,7 @@ class ScoreboardOverlayWindow(QWidget):
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
         )
         self.diff_title.setVisible(False)
+        self.diff_title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         top.addWidget(self.diff_title, 1)
 
         btn = QPushButton("×")
@@ -334,20 +337,15 @@ class ScoreboardOverlayWindow(QWidget):
         btn.setToolTip("Hide scoreboard (tray menu → Show scoreboard)")
         btn.clicked.connect(self._user_close)
         top.addWidget(btn, 0)
-        shell_l.addLayout(top)
+        shell_l.addWidget(self.title_bar)
 
         self.board = ScoreboardWidget(compact=True)
         self.board.bind_external_summary(self.diff_title)
-        # Activation is handled on click-without-drag (see eventFilter).
+        self.board.clicked.connect(self.activated.emit)
         shell_l.addWidget(self.board)
         lay.addWidget(shell)
         self.adjustSize()
-        self._install_drag_filters(self)
-
-    def _install_drag_filters(self, root: QWidget) -> None:
-        root.installEventFilter(self)
-        for child in root.findChildren(QWidget):
-            child.installEventFilter(self)
+        self.title_bar.installEventFilter(self)
 
     def _after_content_resize(self) -> None:
         self.adjustSize()
@@ -434,43 +432,25 @@ class ScoreboardOverlayWindow(QWidget):
         event.accept()
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
-        et = event.type()
-        if et == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
-            if event.button() == Qt.MouseButton.LeftButton:
-                # Let the close button keep its own click.
-                w = obj if isinstance(obj, QWidget) else None
-                if w is not None and w.objectName() == "scoreClose":
-                    self._drag_from_close = True
-                    return False
-                self._drag_from_close = False
-                self._drag_origin = event.globalPosition().toPoint()
+        # Drag only from the thin title bar (EBF + records). Never open main window.
+        if obj is self.title_bar and isinstance(event, QMouseEvent):
+            et = event.type()
+            if et == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 self._drag_offset = (
                     event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 )
-                self._drag_moved = False
-                return False
-        if et == QEvent.Type.MouseMove and isinstance(event, QMouseEvent):
+                self.title_bar.grabMouse()
+                return True
             if (
-                self._drag_offset is not None
-                and not self._drag_from_close
+                et == QEvent.Type.MouseMove
+                and self._drag_offset is not None
                 and event.buttons() & Qt.MouseButton.LeftButton
-                and self._drag_origin is not None
             ):
-                delta = event.globalPosition().toPoint() - self._drag_origin
-                if abs(delta.x()) > 3 or abs(delta.y()) > 3:
-                    self._drag_moved = True
-                    self._user_placed = True
-                    self.move(event.globalPosition().toPoint() - self._drag_offset)
-                    return True
-        if et == QEvent.Type.MouseButtonRelease and isinstance(event, QMouseEvent):
-            if event.button() == Qt.MouseButton.LeftButton:
-                moved = self._drag_moved
-                from_close = self._drag_from_close
-                self._drag_origin = None
+                self._user_placed = True
+                self.move(event.globalPosition().toPoint() - self._drag_offset)
+                return True
+            if et == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
                 self._drag_offset = None
-                self._drag_moved = False
-                self._drag_from_close = False
-                if not moved and not from_close:
-                    self.activated.emit()
-                return False
+                self.title_bar.releaseMouse()
+                return True
         return super().eventFilter(obj, event)
