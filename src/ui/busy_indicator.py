@@ -99,3 +99,10 @@ class BusyIndicator(QWidget):
     def hide_busy(self) -> None:
         self._spinner.stop()
         self.setVisible(False)
+
+    # Aliases used by setup wizard / older call sites
+    def start(self, message: str = "Please wait…") -> None:
+        self.show_busy(message)
+
+    def stop(self) -> None:
+        self.hide_busy()

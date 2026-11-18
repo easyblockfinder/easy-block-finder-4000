@@ -184,6 +184,22 @@ QPushButton#stopBtn:disabled {
     border-color: #c8d2dc;
     background: #f0f3f6;
 }
+QPushButton#changeNetworkBtn {
+    background: #ffffff;
+    color: #0f766e;
+    border: 1px solid #0d9488;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-weight: 700;
+    font-size: 13px;
+    min-width: 140px;
+}
+QPushButton#changeNetworkBtn:hover { background: #ecfdf5; }
+QPushButton#changeNetworkBtn:disabled {
+    color: #9bb0b8;
+    border-color: #c8d2dc;
+    background: #f0f3f6;
+}
 QLabel#unitFixed {
     color: #334155;
     font-size: 13px;
@@ -455,7 +471,9 @@ class MainWindow(QMainWindow):
         self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.stop_btn.setEnabled(False)
         self.btn_change_network = QPushButton("Change network")
+        self.btn_change_network.setObjectName("changeNetworkBtn")
         self.btn_change_network.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_change_network.setMinimumHeight(40)
         self.btn_change_network.clicked.connect(self._on_change_network)
         self.start_btn.clicked.connect(self._on_start)
         self.stop_btn.clicked.connect(self._on_stop)
@@ -824,6 +842,11 @@ class MainWindow(QMainWindow):
         act_upd = QAction("Check for Updates…", self)
         act_upd.triggered.connect(lambda: self._check_for_updates(manual=True))
         help_menu.addAction(act_upd)
+
+        # Top-level Quit next to Help — full exit (not tray hide)
+        act_quit_menu = QAction("&Quit", self)
+        act_quit_menu.triggered.connect(self._quit_from_menu)
+        self.menuBar().addAction(act_quit_menu)
 
     def _show_howto(self) -> None:
         from ui.howto_dialog import HowToUseDialog
@@ -2125,16 +2148,39 @@ class MainWindow(QMainWindow):
         dlg.form.pick_gpu_clicked.connect(self._on_pick_gpu)
         if dlg.exec():
             vals = dlg.values()
+            overlay = bool(vals.pop("scoreboard_overlay_enabled", True))
             self._cfg.update(vals)
             save_settings(vals)
             self._cfg = load_settings()
             self._push_settings()
+            self._set_scoreboard_overlay_enabled(overlay)
+            if not self.isVisible() or self.isMinimized():
+                if overlay:
+                    self._maybe_show_scoreboard_overlay()
+                else:
+                    self._hide_scoreboard_overlay()
+            else:
+                self._hide_scoreboard_overlay()
             if self.controller.is_running():
                 self.controller.update_cpu_options(
                     cpu_thread_limit=self._cpu_threads_val(),
                     pause_on_battery=self._pause_battery_val(),
                     xmrig_donate_level=int(self._cfg.get("xmrig_donate_level") or 1),
                 )
+
+    def _quit_from_menu(self) -> None:
+        """Menu-bar Quit: confirm, then full exit (same path as tray Quit)."""
+        reply = QMessageBox.question(
+            self,
+            "Quit",
+            "Quit Easy Block Finder 4000?\n\n"
+            "Mining will stop and the app will exit completely "
+            "(it will not stay in the tray).",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._quit_app()
 
     def _on_setup_wizard_finished(self, updates: dict) -> None:
         self._cfg.update(updates)

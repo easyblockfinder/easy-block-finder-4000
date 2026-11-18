@@ -164,7 +164,7 @@ class SetupWizardPage(QWidget):
         self._on_page(0)
 
     def start_hardware_scan(self) -> None:
-        self._busy.start("Detecting CPU / GPU…")
+        self._busy.show_busy("Detecting CPU / GPU…")
         self._hw_text.setPlainText("Scanning…")
         self._worker = _HwWorker()
         self._worker.finished_ok.connect(self._on_hw)
@@ -172,7 +172,7 @@ class SetupWizardPage(QWidget):
         self._worker.start()
 
     def _on_hw(self, report: object) -> None:
-        self._busy.stop()
+        self._busy.hide_busy()
         self._report = report
         lines: list[str] = []
         try:
@@ -191,7 +191,7 @@ class SetupWizardPage(QWidget):
         self.form.set_hardware_summary(text.replace("\n", " | "))
 
     def _on_hw_fail(self, msg: str) -> None:
-        self._busy.stop()
+        self._busy.hide_busy()
         self._hw_text.setPlainText(f"Hardware scan failed: {msg}")
 
     def _on_page(self, idx: int) -> None:

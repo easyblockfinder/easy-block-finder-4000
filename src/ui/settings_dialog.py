@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QLabel,
@@ -36,6 +37,18 @@ class SettingsDialog(QDialog):
         self.form.load_from(self._cfg)
         lay.addWidget(self.form)
 
+        self.chk_scoreboard = QCheckBox(
+            "Show mini scoreboard overlay when minimized to the system tray"
+        )
+        self.chk_scoreboard.setChecked(
+            bool(self._cfg.get("scoreboard_overlay_enabled", True))
+        )
+        self.chk_scoreboard.setToolTip(
+            "When the main window is in the tray, a small LED scoreboard can stay "
+            "on-screen (bottom-right). Turn off to hide it."
+        )
+        lay.addWidget(self.chk_scoreboard)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -44,4 +57,6 @@ class SettingsDialog(QDialog):
         lay.addWidget(buttons)
 
     def values(self) -> dict[str, Any]:
-        return self.form.values()
+        out = self.form.values()
+        out["scoreboard_overlay_enabled"] = self.chk_scoreboard.isChecked()
+        return out
