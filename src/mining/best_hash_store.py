@@ -76,8 +76,13 @@ def load_best_hash_state() -> dict:
             if not isinstance(item, dict):
                 continue
             rec = _record_from_dict(item)
-            if rec is not None:
-                records[str(network_id)] = rec
+            if rec is None:
+                continue
+            try:
+                hash_be_hex_to_int(rec.hash_be_hex)
+            except ValueError:
+                continue
+            records[str(network_id)] = rec
     return {"mode": mode, "records": records}
 
 
@@ -124,7 +129,12 @@ def upsert_record_if_better(
     mode = state["mode"]
     records: dict[str, BestHashRecord] = dict(state["records"])
     existing = records.get(network_id)
-    existing_int = hash_be_hex_to_int(existing.hash_be_hex) if existing else None
+    existing_int = None
+    if existing:
+        try:
+            existing_int = hash_be_hex_to_int(existing.hash_be_hex)
+        except ValueError:
+            existing_int = None
     if not is_better_hash(candidate_int, existing_int):
         return None
     found_at = found_at_iso or datetime.now(timezone.utc).isoformat()

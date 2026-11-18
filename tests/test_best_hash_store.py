@@ -131,3 +131,79 @@ def test_default_mode_when_missing(tmp_path, monkeypatch):
     st = load_best_hash_state()
     assert st["mode"] == "gpu_batch"
     assert st["records"] == {}
+
+
+def test_load_skips_invalid_hash_be_hex(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    from app_meta import APP_DATA_DIRNAME
+
+    folder = tmp_path / APP_DATA_DIRNAME
+    folder.mkdir(parents=True)
+    folder.joinpath("best_hash_records.json").write_text(
+        json.dumps(
+            {
+                "mode": "gpu_batch",
+                "records": {
+                    "btc": {
+                        "hash_be_hex": "not-valid-hex",
+                        "difficulty": 1.0,
+                        "nonce_hex": "n",
+                        "job_id": "j",
+                        "nbits": "1d00ffff",
+                        "network_difficulty_at_time": 1.0,
+                        "found_at_iso": "2026-01-01T00:00:00+00:00",
+                    },
+                    "bch": {
+                        "hash_be_hex": "00000000" + "22" * 28,
+                        "difficulty": 1.0,
+                        "nonce_hex": "x",
+                        "job_id": "y",
+                        "nbits": "1d00ffff",
+                        "network_difficulty_at_time": 1.0,
+                        "found_at_iso": "2026-01-01T00:00:00+00:00",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    st = load_best_hash_state()
+    assert list(st["records"].keys()) == ["bch"]
+
+
+def test_upsert_replaces_corrupt_existing_record(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    from app_meta import APP_DATA_DIRNAME
+
+    folder = tmp_path / APP_DATA_DIRNAME
+    folder.mkdir(parents=True)
+    folder.joinpath("best_hash_records.json").write_text(
+        json.dumps(
+            {
+                "mode": "gpu_batch",
+                "records": {
+                    "btc": {
+                        "hash_be_hex": "short",
+                        "difficulty": 1.0,
+                        "nonce_hex": "old",
+                        "job_id": "j",
+                        "nbits": "1d00ffff",
+                        "network_difficulty_at_time": 1.0,
+                        "found_at_iso": "2026-01-01T00:00:00+00:00",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    good = "00000000" + "aa" * 28
+    r = upsert_record_if_better(
+        "btc",
+        hash_be_hex=good,
+        nonce_hex="new",
+        job_id="j2",
+        nbits="1d00ffff",
+        network_difficulty_at_time=1.0,
+    )
+    assert r is not None
+    assert load_best_hash_state()["records"]["btc"].nonce_hex == "new"
