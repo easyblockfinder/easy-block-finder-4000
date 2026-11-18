@@ -2172,10 +2172,18 @@ class MainWindow(QMainWindow):
 
     def _push_difficulty_row(self) -> None:
         vis = self._difficulty_row_visible()
-        net, best = self._last_net_diff, self._last_best_diff
-        self.scoreboard.set_difficulty_row(net, best, visible=vis)
+        net, best, acc = (
+            self._last_net_diff,
+            self._last_best_diff,
+            self._last_accepted_best_diff,
+        )
+        self.scoreboard.set_difficulty_row(
+            net, best, visible=vis, accepted_best=acc
+        )
         if self._scoreboard_overlay is not None:
-            self._scoreboard_overlay.set_difficulty_row(net, best, visible=vis)
+            self._scoreboard_overlay.set_difficulty_row(
+                net, best, visible=vis, accepted_best=acc
+            )
 
     def _load_stored_best_into_row(self) -> None:
         """Idle startup / network switch: show stored best for current network."""
@@ -2277,6 +2285,7 @@ class MainWindow(QMainWindow):
             self._last_net_diff,
             self._last_best_diff,
             visible=self._difficulty_row_visible(),
+            accepted_best=self._last_accepted_best_diff,
         )
         self._scoreboard_overlay.show_overlay()
         self._refresh_scoreboard_tray_action()

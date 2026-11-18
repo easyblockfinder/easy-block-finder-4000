@@ -1,4 +1,4 @@
-"""Casio-style scoreboard + tray overlay mini window."""
+"""LED digit scoreboard + tray overlay mini window."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -36,10 +37,16 @@ QLabel#casioTitle {
     letter-spacing: 1px;
 }
 QLabel#diffSummary {
-    color: #b0b0b0;
-    font-size: 10px;
+    color: #111111;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+}
+QLabel#diffSummaryCompact {
+    color: #ff6b5a;
+    font-size: 8px;
     font-weight: 700;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
 }
 QPushButton#scoreClose {
     background: #1a1a1a;
@@ -72,11 +79,26 @@ QFrame#casioBox {
     border: 1px solid #00e676;
 }
 QLabel#diffSummary {
+    color: #0a7a32;
+}
+QLabel#diffSummaryCompact {
     color: #00e676;
 }
 """
 
 _CELEBRATE_MS = 1600
+
+
+def _summary_line(
+    network_diff: float | None,
+    gpu_best: float | None,
+    accepted_best: float | None,
+) -> str:
+    return (
+        f"NET {format_diff_short(network_diff)}  "
+        f"GPU {format_diff_short(gpu_best)}  "
+        f"ACC {format_diff_short(accepted_best)}"
+    )
 
 
 class ScoreboardWidget(QFrame):
@@ -93,24 +115,27 @@ class ScoreboardWidget(QFrame):
         self.blk = CasioDigitRow("BLK", 3 if compact else 4, compact=compact)
         self.acc = CasioDigitRow("ACC", 4 if compact else 5, compact=compact)
         self.rej = CasioDigitRow("REJ", 4 if compact else 5, compact=compact)
-        # ATTEMPTS: wide zero pad; grows further if needed (full integer)
         self.att = CasioDigitRow(
             "ATT" if compact else "ATTEMPTS",
             13 if compact else 17,
             compact=compact,
         )
-        # Thermal probe °C — immediately after ATTEMPTS
         self.temp = CasioDigitRow("TEMP", 3, compact=compact)
         self.temp.set_text("--")
 
+        # Main board owns the summary label (above ATTEMPTS). Compact hides it;
+        # overlay title row shows the same text after "EBF".
         self.diff_summary = QLabel("")
         self.diff_summary.setObjectName("diffSummary")
+        self.diff_summary.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         self.diff_summary.setVisible(False)
+        self.diff_summary.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._celebrate_timer: QTimer | None = None
         self._summary_text = ""
+        self._external_summary: QLabel | None = None
 
         if compact:
-            # Mini overlay: top = BLK/ACC/REJ, bottom = ATTEMPTS + TEMP
+            self.diff_summary.hide()
             root = QVBoxLayout(self)
             root.setContentsMargins(0, 0, 0, 0)
             root.setSpacing(4)
@@ -128,22 +153,27 @@ class ScoreboardWidget(QFrame):
             bottom.addWidget(self.temp, 0)
             bottom.addStretch(1)
             root.addLayout(bottom)
-            root.addWidget(self.diff_summary)
         else:
-            outer = QVBoxLayout(self)
+            outer = QHBoxLayout(self)
             outer.setContentsMargins(0, 0, 0, 0)
-            outer.setSpacing(4)
-            root = QHBoxLayout()
-            root.setContentsMargins(0, 0, 0, 0)
-            root.setSpacing(6)
-            root.addWidget(self.blk)
-            root.addWidget(self.acc)
-            root.addWidget(self.rej)
-            root.addWidget(self.att, 0)
-            root.addWidget(self.temp, 0)
-            root.addStretch(1)
-            outer.addLayout(root)
-            outer.addWidget(self.diff_summary)
+            outer.setSpacing(6)
+            outer.addWidget(self.blk)
+            outer.addWidget(self.acc)
+            outer.addWidget(self.rej)
+
+            att_col = QVBoxLayout()
+            att_col.setContentsMargins(0, 0, 0, 0)
+            att_col.setSpacing(2)
+            att_col.addWidget(self.diff_summary)
+            att_col.addWidget(self.att, 0, Qt.AlignmentFlag.AlignHCenter)
+            outer.addLayout(att_col, 0)
+
+            outer.addWidget(self.temp, 0)
+            outer.addStretch(1)
+
+    def bind_external_summary(self, label: QLabel) -> None:
+        """Mini overlay: show NET/GPU/ACC on the EBF title row."""
+        self._external_summary = label
 
     def update_counts(
         self,
@@ -180,27 +210,40 @@ class ScoreboardWidget(QFrame):
         best_diff: float | None,
         *,
         visible: bool,
+        accepted_best: float | None = None,
     ) -> None:
-        self._summary_text = (
-            f"NET {format_diff_short(network_diff)}   BEST {format_diff_short(best_diff)}"
-        )
+        self._summary_text = _summary_line(network_diff, best_diff, accepted_best)
         if not visible:
             self._end_celebration()
-        self.diff_summary.setVisible(bool(visible))
-        if visible and self._celebrate_timer is None:
-            self.diff_summary.setText(self._summary_text)
+        show = bool(visible)
+        if self._compact:
+            self.diff_summary.setVisible(False)
+            if self._external_summary is not None:
+                self._external_summary.setVisible(show)
+                if show and self._celebrate_timer is None:
+                    self._external_summary.setText(self._summary_text)
+        else:
+            self.diff_summary.setVisible(show)
+            if show and self._celebrate_timer is None:
+                self.diff_summary.setText(self._summary_text)
 
     def celebrate_record(self) -> None:
         """Flash green + NEW RECORD for ~1.6s."""
-        if not self.diff_summary.isVisible():
+        target = self._active_summary_label()
+        if target is None or not target.isVisible():
             return
         self.setStyleSheet(_BOARD_QSS + _CELEBRATE_QSS)
-        self.diff_summary.setText(f"NEW RECORD   {self._summary_text}")
+        target.setText(f"NEW RECORD  {self._summary_text}")
         if self._celebrate_timer is None:
             self._celebrate_timer = QTimer(self)
             self._celebrate_timer.setSingleShot(True)
             self._celebrate_timer.timeout.connect(self._end_celebration)
         self._celebrate_timer.start(_CELEBRATE_MS)
+
+    def _active_summary_label(self) -> QLabel | None:
+        if self._compact:
+            return self._external_summary
+        return self.diff_summary
 
     def _end_celebration(self) -> None:
         if self._celebrate_timer is not None:
@@ -208,7 +251,9 @@ class ScoreboardWidget(QFrame):
             self._celebrate_timer.deleteLater()
             self._celebrate_timer = None
         self.setStyleSheet(_BOARD_QSS)
-        self.diff_summary.setText(self._summary_text)
+        target = self._active_summary_label()
+        if target is not None:
+            target.setText(self._summary_text)
 
     def stop_alerts(self) -> None:
         if self._celebrate_timer is not None:
@@ -257,11 +302,17 @@ class ScoreboardOverlayWindow(QWidget):
 
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(2)
+        top.setSpacing(4)
         tip = QLabel("EBF")
         tip.setObjectName("casioTitle")
         tip.setStyleSheet("font-size: 8px; font-weight: 700;")
-        top.addWidget(tip, 1)
+        top.addWidget(tip, 0)
+
+        self.diff_title = QLabel("")
+        self.diff_title.setObjectName("diffSummaryCompact")
+        self.diff_title.setVisible(False)
+        top.addWidget(self.diff_title, 1)
+
         btn = QPushButton("×")
         btn.setObjectName("scoreClose")
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -271,6 +322,7 @@ class ScoreboardOverlayWindow(QWidget):
         shell_l.addLayout(top)
 
         self.board = ScoreboardWidget(compact=True)
+        self.board.bind_external_summary(self.diff_title)
         self.board.clicked.connect(self.activated.emit)
         shell_l.addWidget(self.board)
         lay.addWidget(shell)
@@ -300,8 +352,14 @@ class ScoreboardOverlayWindow(QWidget):
         best_diff: float | None,
         *,
         visible: bool,
+        accepted_best: float | None = None,
     ) -> None:
-        self.board.set_difficulty_row(network_diff, best_diff, visible=visible)
+        self.board.set_difficulty_row(
+            network_diff,
+            best_diff,
+            visible=visible,
+            accepted_best=accepted_best,
+        )
         self.adjustSize()
         if self.isVisible():
             self.place_bottom_right()
@@ -338,13 +396,10 @@ class ScoreboardOverlayWindow(QWidget):
     def closeEvent(self, event) -> None:  # noqa: N802
         self.board.stop_alerts()
         app = QApplication.instance()
-        # App-wide shutdown: never treat as user dismiss (avoids use-after-free).
         if app is not None and app.closingDown():
             self._on_user_close = None
             event.accept()
             return
-        # Only treat an interactive dismiss as user-close. Programmatic
-        # close()/teardown must not persist scoreboard_overlay_enabled=false.
         if (
             self._on_user_close
             and not self._closing_by_user
