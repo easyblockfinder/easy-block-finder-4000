@@ -143,6 +143,8 @@ class CasioDigitRow(QFrame):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("casioBox")
+        # Hug digit content — never expand and space digits apart on wide layouts
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self._compact = compact
         self._on_color = on_color
         self._off_color = off_color
@@ -153,6 +155,7 @@ class CasioDigitRow(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4 if compact else 8, 3 if compact else 4, 4 if compact else 8, 3 if compact else 4)
         lay.setSpacing(2 if compact else 2)
+        lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._title = QLabel(title)
         self._title.setObjectName("casioTitle")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -162,6 +165,7 @@ class CasioDigitRow(QFrame):
         self._digit_row = QHBoxLayout()
         self._digit_row.setSpacing(2 if compact else 3)
         self._digit_row.setContentsMargins(0, 0, 0, 0)
+        self._digit_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self._digits: list[SevenSegmentDigit] = []
         for _ in range(self._width):
             self._digit_row.addWidget(self._make_digit())
@@ -194,6 +198,12 @@ class CasioDigitRow(QFrame):
             if self._alert and self._alert_phase:
                 self._digits[-1].set_bg("#1b5e20")
         self._width = max(self._width, need)
+
+    def stop_alerts(self) -> None:
+        """Stop blink timer before widget teardown (avoids native abort on quit)."""
+        self._alert = False
+        self._alert_phase = False
+        self._alert_timer.stop()
 
     def set_alert(self, active: bool) -> None:
         """Green blinking digit background while value is non-zero (block found)."""

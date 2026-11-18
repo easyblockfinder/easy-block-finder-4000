@@ -74,13 +74,13 @@ class ScoreboardWidget(QFrame):
         self.blk = CasioDigitRow("BLK", 3 if compact else 4, compact=compact)
         self.acc = CasioDigitRow("ACC", 4 if compact else 5, compact=compact)
         self.rej = CasioDigitRow("REJ", 4 if compact else 5, compact=compact)
-        # ATTEMPTS: wide zero pad for strong GPUs; grows further if needed (full integer)
+        # ATTEMPTS: wide zero pad; grows further if needed (full integer)
         self.att = CasioDigitRow(
             "ATT" if compact else "ATTEMPTS",
-            10 if compact else 14,
+            13 if compact else 17,
             compact=compact,
         )
-        # Thermal probe °C (CPU for XMR, GPU otherwise) — blank "--" when unreadable
+        # Thermal probe °C — immediately after ATTEMPTS
         self.temp = CasioDigitRow("TEMP", 3, compact=compact)
         self.temp.set_text("--")
 
@@ -99,8 +99,9 @@ class ScoreboardWidget(QFrame):
             bottom = QHBoxLayout()
             bottom.setContentsMargins(0, 0, 0, 0)
             bottom.setSpacing(4)
-            bottom.addWidget(self.att, 1)
+            bottom.addWidget(self.att, 0)
             bottom.addWidget(self.temp, 0)
+            bottom.addStretch(1)
             root.addLayout(bottom)
         else:
             root = QHBoxLayout(self)
@@ -109,8 +110,9 @@ class ScoreboardWidget(QFrame):
             root.addWidget(self.blk)
             root.addWidget(self.acc)
             root.addWidget(self.rej)
-            root.addWidget(self.att, 1)
+            root.addWidget(self.att, 0)
             root.addWidget(self.temp, 0)
+            root.addStretch(1)
 
     def update_counts(
         self,
@@ -140,6 +142,10 @@ class ScoreboardWidget(QFrame):
             self.temp.set_text("--")
             return
         self.temp.set_value(min(999, val))
+
+    def stop_alerts(self) -> None:
+        for row in (self.blk, self.acc, self.rej, self.att, self.temp):
+            row.stop_alerts()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
@@ -234,14 +240,25 @@ class ScoreboardOverlayWindow(QWidget):
         self.show()
         self.raise_()
 
+    def stop_alerts(self) -> None:
+        self.board.stop_alerts()
+
     def _user_close(self) -> None:
         self._closing_by_user = True
+        self.board.stop_alerts()
         self.hide()
         if self._on_user_close:
             self._on_user_close()
         self._closing_by_user = False
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self.board.stop_alerts()
+        app = QApplication.instance()
+        # App-wide shutdown: never treat as user dismiss (avoids use-after-free).
+        if app is not None and app.closingDown():
+            self._on_user_close = None
+            event.accept()
+            return
         # Only treat an interactive dismiss as user-close. Programmatic
         # close()/teardown must not persist scoreboard_overlay_enabled=false.
         if (
@@ -249,7 +266,9 @@ class ScoreboardOverlayWindow(QWidget):
             and not self._closing_by_user
             and self.isVisible()
         ):
-            self._on_user_close()
+            cb = self._on_user_close
+            self._on_user_close = None
+            cb()
         event.accept()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802

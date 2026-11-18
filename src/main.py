@@ -34,13 +34,18 @@ def _crash_log_path() -> Path:
 
 
 def _install_crash_logging() -> None:
-    """Persist uncaught exceptions so silent tray/GUI exits leave a trail."""
-    try:
-        faulthandler.enable()
-    except Exception:
-        pass
-
+    """Persist uncaught exceptions / fatal traces so silent GUI exits leave a trail."""
     log_path = _crash_log_path()
+    # Keep the file handle alive for the process lifetime (faulthandler needs it).
+    global _CRASH_LOG_FH  # noqa: PLW0603
+    try:
+        _CRASH_LOG_FH = log_path.open("a", encoding="utf-8")
+        faulthandler.enable(file=_CRASH_LOG_FH, all_threads=True)
+    except Exception:
+        try:
+            faulthandler.enable()
+        except Exception:
+            pass
 
     def _hook(exc_type, exc, tb) -> None:
         text = "".join(traceback.format_exception(exc_type, exc, tb))
@@ -53,6 +58,9 @@ def _install_crash_logging() -> None:
         sys.__excepthook__(exc_type, exc, tb)
 
     sys.excepthook = _hook
+
+
+_CRASH_LOG_FH = None
 
 
 def _force_light_palette(app) -> None:
@@ -116,7 +124,8 @@ def main() -> int:
 
     guard = SingleInstanceGuard(app)
     if not guard.ensure_primary():
-        # Another instance is running — it was asked to raise its window
+        # Another instance is running — it was asked to raise its window.
+        # Exit quietly; a MessageBox here would look like a crash to users.
         return 0
 
     try:
@@ -126,6 +135,9 @@ def main() -> int:
         raise
     guard.activated.connect(win.raise_to_front)
     app.aboutToQuit.connect(guard.close)
+    # Stop LED timers, destroy tray overlay, wait for QThreads before teardown
+    # (hidden main + visible Tool overlay / live workers caused native abort on quit).
+    app.aboutToQuit.connect(win._teardown_for_quit)
     win.show()
     return app.exec()
 

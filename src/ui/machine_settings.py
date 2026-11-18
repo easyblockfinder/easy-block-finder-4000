@@ -176,4 +176,5 @@ def default_wizard_cfg(base: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     cfg.setdefault("resume_temp", 55)
     cfg.setdefault("cpu_thread_limit", 0)
     cfg.setdefault("pause_on_battery", True)
+    cfg.setdefault("scoreboard_overlay_enabled", True)
     return cfg

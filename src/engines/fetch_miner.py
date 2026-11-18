@@ -22,6 +22,10 @@ _LOCK_PATH = Path(__file__).resolve().parents[2] / "third_party" / "miners.lock.
 
 
 def load_lock() -> dict[str, Any]:
+    """Return pinned miner catalog. Empty dict if lock file is missing (native-only install)."""
+    if not _LOCK_PATH.is_file():
+        log.warning("miners.lock.json missing at %s — external miners unavailable", _LOCK_PATH)
+        return {}
     raw = json.loads(_LOCK_PATH.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise RuntimeError("miners.lock.json invalid.")

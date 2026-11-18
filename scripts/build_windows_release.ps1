@@ -60,6 +60,16 @@ foreach ($d in $copyDirs) {
     Copy-Item -LiteralPath $src -Destination (Join-Path $Payload $d) -Recurse -Force
 }
 
+# Official miner pin file (XMR/RVN/ERG downloads). Required next to src/ for fetch_miner.
+$lockSrc = Join-Path $Root "third_party\miners.lock.json"
+$lockDstDir = Join-Path $Payload "third_party"
+if (-not (Test-Path -LiteralPath $lockSrc)) {
+    throw "Missing third_party\miners.lock.json — external miner catalog required"
+}
+New-Item -ItemType Directory -Force -Path $lockDstDir | Out-Null
+Copy-Item -LiteralPath $lockSrc -Destination (Join-Path $lockDstDir "miners.lock.json") -Force
+Write-Host "Copy third_party\miners.lock.json ..."
+
 $rootFiles = @(
     "EBF4000.exe", "start.bat", "Install.bat", "requirements.txt", "requirements-runtime.txt",
     "LICENSE", "README.md", "DISCLAIMER.md", "SECURITY.md", "DONATE.md",

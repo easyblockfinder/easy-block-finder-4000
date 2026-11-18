@@ -209,6 +209,8 @@ class SetupWizardPage(QWidget):
         if i >= self._stack.count() - 1:
             updates = self.form.values()
             updates["setup_wizard_done"] = True
+            # First-run: tray mini scoreboard always on (user can disable later in Settings)
+            updates["scoreboard_overlay_enabled"] = True
             self.finished.emit(updates)
             return
         if i == 2:

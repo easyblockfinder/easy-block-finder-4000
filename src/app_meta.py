@@ -6,7 +6,7 @@ from pathlib import Path
 
 APP_NAME = "Easy Block Finder 4000"
 APP_SHORT = "EBF4000"
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 # Version label shown to the user
 APP_VERSION_LABEL = f"{APP_SHORT} - v{APP_VERSION}"
 # window / tray

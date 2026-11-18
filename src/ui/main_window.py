@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
 
 from monitor.hardware_gate import network_block_reason
 from networks.profiles import get_profile, list_profiles, normalize_network_id
+from ui.busy_indicator import BusyIndicator
 from ui.donate_dialog import DonateDialog
 from ui.hardware_detect_page import HardwareDetectPage
 from ui.network_select import NetworkSelectPage
@@ -343,6 +344,8 @@ class MainWindow(QMainWindow):
         self._last_thermal_paused: bool | None = None
         self._last_block_notify_key: str | None = None
         self._tray_exit = False
+        self._tray_minimize_tip_shown = False
+        self._scoreboard_hide_tip_shown = False
         self._stats_url = ""
         self._defender_help_shown = False
         self._update_check_worker = None
@@ -358,6 +361,8 @@ class MainWindow(QMainWindow):
         self._last_scoreboard = (0, 0, 0, 0)  # blocks, accepted, rejected, attempts
         self._last_scoreboard_temp: int | None = None
         self._scoreboard_overlay: ScoreboardOverlayWindow | None = None
+        self._quit_busy_host: QWidget | None = None
+        self._quit_busy: BusyIndicator | None = None
 
         self._build_menu()
 
@@ -1129,6 +1134,7 @@ class MainWindow(QMainWindow):
             progress_dlg.close()
             self._update_progress_dlg = None
             self._tray_exit = True
+            self._teardown_for_quit()
             if self.tray is not None:
                 self.tray.hide()
             QApplication.instance().quit()
@@ -1659,6 +1665,10 @@ class MainWindow(QMainWindow):
         Returns True if already ready. Returns False if declined or download started
         (on_ready called after a successful download).
         """
+        # BTC/BCH native OpenCL — never touch miners.lock.json
+        if getattr(self._profile, "engine_kind", "") != "managed_external":
+            return True
+
         from engines.miner_catalog import (
             is_miner_installed,
             miner_id_for_network,
@@ -1668,7 +1678,7 @@ class MainWindow(QMainWindow):
 
         miner_id = miner_id_for_network(self._network_id)
         if not miner_id:
-            return True  # native OpenCL path — no external miner
+            return True  # no catalog entry — treat as ready / native
 
         if is_miner_installed(miner_id) and self._miner_consent_ok():
             return True
@@ -1693,6 +1703,19 @@ class MainWindow(QMainWindow):
         return False
 
     def _on_start(self) -> None:
+        try:
+            self._on_start_inner()
+        except Exception as exc:
+            import traceback
+
+            traceback.print_exc()
+            QMessageBox.warning(
+                self,
+                "Could not start",
+                f"Start failed unexpectedly:\n\n{exc}",
+            )
+
+    def _on_start_inner(self) -> None:
         self._persist_form()
         self._push_settings()
         blocked = network_block_reason(self._network_id, probe_gpu=True)
@@ -1820,6 +1843,15 @@ class MainWindow(QMainWindow):
             self.btn_change_network.setEnabled(True)
 
     def _apply_stats(self, stats: MiningStats) -> None:
+        try:
+            self._apply_stats_inner(stats)
+        except Exception:
+            # Never let a UI stats tick kill the process (PyQt slot abort).
+            import traceback
+
+            traceback.print_exc()
+
+    def _apply_stats_inner(self, stats: MiningStats) -> None:
         self._sync_idle_controls_if_needed()
         self.lbl_conn.setText(
             "TEST (local)"
@@ -2065,12 +2097,7 @@ class MainWindow(QMainWindow):
         self._refresh_scoreboard_tray_action()
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
-        self.tray.showMessage(
-            APP_NAME,
-            "Running in the system tray. Double-click: window. Close = minimize to tray.",
-            QSystemTrayIcon.MessageIcon.Information,
-            4000,
-        )
+        # No startup balloon — Windows queues these and they keep popping after exit.
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (
@@ -2135,19 +2162,62 @@ class MainWindow(QMainWindow):
         if self._scoreboard_overlay is not None and self._scoreboard_overlay.isVisible():
             self._scoreboard_overlay.hide()
 
+    def _teardown_scoreboard_for_quit(self) -> None:
+        """Stop LED timers + destroy tray overlay before QApplication.quit()."""
+        try:
+            self.scoreboard.stop_alerts()
+        except Exception:
+            pass
+        ov = self._scoreboard_overlay
+        if ov is None:
+            return
+        try:
+            ov._on_user_close = None
+            ov.stop_alerts()
+            ov.hide()
+            ov.close()
+            ov.deleteLater()
+        except Exception:
+            pass
+        self._scoreboard_overlay = None
+
+    def _wait_background_workers(self, timeout_ms: int = 4000) -> None:
+        """Avoid native abort from destroying QThread owners while still running."""
+        for w in (
+            self._idle_prep_worker,
+            self._update_check_worker,
+            self._update_prepare_worker,
+            self._capacity_worker,
+            self._miner_dl_worker,
+            self._stop_worker,
+        ):
+            if w is None:
+                continue
+            try:
+                if w.isRunning():
+                    w.wait(timeout_ms)
+            except Exception:
+                pass
+
+    def _teardown_for_quit(self) -> None:
+        """Full safe shutdown hook (aboutToQuit / Quit menu / update apply)."""
+        self._teardown_scoreboard_for_quit()
+        self._wait_background_workers()
+
     def _on_scoreboard_overlay_closed(self) -> None:
         self._set_scoreboard_overlay_enabled(False)
         if self.tray is not None and self.tray.isVisible():
-            self.tray.showMessage(
-                APP_NAME,
-                "Scoreboard hidden. Easy Block Finder 4000 is still running in the system tray. "
-                "Tray menu → Show scoreboard to bring it back, or double-click the tray icon to open the window.",
-                QSystemTrayIcon.MessageIcon.Information,
-                6000,
-            )
             self.tray.setToolTip(
                 f"{APP_NAME} — still running (scoreboard hidden)"
             )
+            if not self._scoreboard_hide_tip_shown:
+                self._scoreboard_hide_tip_shown = True
+                self.tray.showMessage(
+                    APP_NAME,
+                    "Scoreboard hidden. Tray menu → Show scoreboard to bring it back.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    2500,
+                )
 
     def _on_tray_show_scoreboard(self) -> None:
         self._set_scoreboard_overlay_enabled(True)
@@ -2196,11 +2266,50 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.StandardButton.Yes:
             self._quit_app()
 
+    def _ensure_quit_busy_overlay(self) -> None:
+        if self._quit_busy_host is not None:
+            return
+        host = QWidget(self)
+        host.setObjectName("quitBusyHost")
+        host.setStyleSheet(
+            "QWidget#quitBusyHost { background: rgba(238, 241, 244, 220); }"
+        )
+        lay = QVBoxLayout(host)
+        lay.setContentsMargins(48, 48, 48, 48)
+        lay.addStretch(1)
+        self._quit_busy = BusyIndicator(host)
+        lay.addWidget(self._quit_busy, 0, Qt.AlignmentFlag.AlignHCenter)
+        lay.addStretch(1)
+        host.hide()
+        self._quit_busy_host = host
+
+    def _show_quit_busy(self, message: str = "Quitting…") -> None:
+        """Full-window spinner while stop/teardown runs (Quit can take a moment)."""
+        self._ensure_quit_busy_overlay()
+        assert self._quit_busy_host is not None and self._quit_busy is not None
+        # Cover the whole window (menu bar included)
+        self._quit_busy_host.setGeometry(self.rect())
+        self._quit_busy_host.raise_()
+        self._quit_busy_host.show()
+        self._quit_busy.show_busy(
+            message or "Quitting… Stopping miners and cleaning up."
+        )
+        self.setEnabled(False)
+        QApplication.processEvents()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self._quit_busy_host is not None and self._quit_busy_host.isVisible():
+            self._quit_busy_host.setGeometry(self.rect())
+
     def _on_setup_wizard_finished(self, updates: dict) -> None:
+        updates = dict(updates)
+        updates["scoreboard_overlay_enabled"] = True
         self._cfg.update(updates)
         save_settings(updates)
         self._cfg = load_settings()
         self._push_settings()
+        self._set_scoreboard_overlay_enabled(True)
         self._stack.setCurrentWidget(self._select_page)
 
     def _rerun_setup_wizard(self) -> None:
@@ -2284,7 +2393,10 @@ class MainWindow(QMainWindow):
         if self._stop_busy:
             return
 
+        self._show_quit_busy("Quitting… Stopping miners and cleaning up.")
+
         def _after(ok: bool) -> None:
+            self._show_quit_busy("Quitting… Finishing cleanup.")
             self._force_stop_all_miners()
             if not ok:
                 # Still force-kill orphans; if something remains, warn but exit UI
@@ -2295,6 +2407,9 @@ class MainWindow(QMainWindow):
                 except Exception:
                     left = []
                 if left:
+                    self.setEnabled(True)
+                    if self._quit_busy_host is not None:
+                        self._quit_busy_host.hide()
                     QMessageBox.warning(
                         self,
                         "Could not stop cleanly",
@@ -2302,6 +2417,7 @@ class MainWindow(QMainWindow):
                         "They were signalled to terminate; check Task Manager if needed.",
                     )
             self._tray_exit = True
+            self._teardown_for_quit()
             if self.tray is not None:
                 self.tray.hide()
             QApplication.instance().quit()
@@ -2340,12 +2456,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         self._persist_form()
         if self._tray_exit or self.tray is None:
-            self._hide_scoreboard_overlay()
-            if self._scoreboard_overlay is not None:
-                # Do not treat quit teardown as user dismiss (would persist enabled=false)
-                self._scoreboard_overlay._on_user_close = None
-                self._scoreboard_overlay.close()
-                self._scoreboard_overlay = None
+            self._teardown_for_quit()
             if self._stop_busy:
                 event.ignore()
                 return
@@ -2365,6 +2476,7 @@ class MainWindow(QMainWindow):
                 def _after(ok: bool) -> None:
                     self._force_stop_all_miners()
                     self._tray_exit = True
+                    self._teardown_for_quit()
                     if self.tray is not None:
                         self.tray.hide()
                     self.close()
@@ -2379,10 +2491,12 @@ class MainWindow(QMainWindow):
         # X = minimize to tray, not quit
         event.ignore()
         self.hide()
-        if self.tray is not None:
+        # One tip per session only (repeated balloons spam Windows Action Center)
+        if self.tray is not None and not self._tray_minimize_tip_shown:
+            self._tray_minimize_tip_shown = True
             self.tray.showMessage(
                 APP_NAME,
-                "Running in background. Double-click to open; tray menu → Quit to exit.",
+                "Still running in the tray. Double-click to open; tray menu → Quit to exit.",
                 QSystemTrayIcon.MessageIcon.Information,
-                3500,
+                2500,
             )
