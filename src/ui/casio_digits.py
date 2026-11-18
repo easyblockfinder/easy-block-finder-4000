@@ -254,3 +254,12 @@ class CasioDigitRow(QFrame):
                 text = text[-self._width :]
         for i, dig in enumerate(self._digits):
             dig.set_char(text[i] if i < len(text) else " ")
+
+    def set_text(self, text: str) -> None:
+        """Raw character display (right-aligned, space-padded; supports '-' blanks)."""
+        raw = str(text or "")
+        if len(raw) > self._width:
+            raw = raw[-self._width :]
+        raw = raw.rjust(self._width)
+        for i, dig in enumerate(self._digits):
+            dig.set_char(raw[i] if i < len(raw) else " ")

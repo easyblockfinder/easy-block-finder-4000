@@ -28,22 +28,11 @@ $launchBuild = Join-Path $PSScriptRoot "build_launcher.ps1"
 & $launchBuild -OutDir $Root
 if ($LASTEXITCODE -ne 0) { throw "build_launcher failed" }
 
-# Ensure Inno has an .ico (generated from PNG when missing)
-$PngIcon = Join-Path $Root "assets\ebf4000_icon.png"
+# Inno Setup needs assets\ebf4000_icon.ico — build_launcher.ps1 already writes a
+# csc-compatible multi-size ICO from PNG. Keep a soft check for installer builds.
 $IcoIcon = Join-Path $Root "assets\ebf4000_icon.ico"
-if ((Test-Path -LiteralPath $PngIcon) -and -not (Test-Path -LiteralPath $IcoIcon)) {
-    Write-Host "Generating assets\ebf4000_icon.ico from PNG..."
-    Add-Type -AssemblyName System.Drawing
-    $bmp = [System.Drawing.Bitmap]::FromFile($PngIcon)
-    try {
-        $hIcon = $bmp.GetHicon()
-        $icon = [System.Drawing.Icon]::FromHandle($hIcon)
-        $fs = [System.IO.File]::Create($IcoIcon)
-        try { $icon.Save($fs) } finally { $fs.Dispose() }
-        $icon.Dispose()
-    } finally {
-        $bmp.Dispose()
-    }
+if (-not (Test-Path -LiteralPath $IcoIcon)) {
+    Write-Warning "assets\ebf4000_icon.ico missing after launcher build; Inno may lack SetupIcon"
 }
 
 if (-not $SkipRuntimePrepare) {

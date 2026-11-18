@@ -61,7 +61,7 @@ QFrame#overlayShell {
 
 
 class ScoreboardWidget(QFrame):
-    """Scoreboard: BLK / ACC / REJ + ATTEMPTS (compact overlay: attempts on 2nd row)."""
+    """Scoreboard: BLK / ACC / REJ / ATTEMPTS / TEMP (compact: attempts+temp on 2nd row)."""
 
     clicked = pyqtSignal()
 
@@ -77,12 +77,15 @@ class ScoreboardWidget(QFrame):
         # ATTEMPTS: wide zero pad for strong GPUs; grows further if needed (full integer)
         self.att = CasioDigitRow(
             "ATT" if compact else "ATTEMPTS",
-            12 if compact else 14,
+            10 if compact else 14,
             compact=compact,
         )
+        # Thermal probe °C (CPU for XMR, GPU otherwise) — blank "--" when unreadable
+        self.temp = CasioDigitRow("TEMP", 3, compact=compact)
+        self.temp.set_text("--")
 
         if compact:
-            # Mini overlay: top = BLK/ACC/REJ, bottom = full ATTEMPTS row
+            # Mini overlay: top = BLK/ACC/REJ, bottom = ATTEMPTS + TEMP
             root = QVBoxLayout(self)
             root.setContentsMargins(0, 0, 0, 0)
             root.setSpacing(4)
@@ -93,7 +96,12 @@ class ScoreboardWidget(QFrame):
             top.addWidget(self.acc)
             top.addWidget(self.rej)
             root.addLayout(top)
-            root.addWidget(self.att)
+            bottom = QHBoxLayout()
+            bottom.setContentsMargins(0, 0, 0, 0)
+            bottom.setSpacing(4)
+            bottom.addWidget(self.att, 1)
+            bottom.addWidget(self.temp, 0)
+            root.addLayout(bottom)
         else:
             root = QHBoxLayout(self)
             root.setContentsMargins(0, 0, 0, 0)
@@ -102,6 +110,7 @@ class ScoreboardWidget(QFrame):
             root.addWidget(self.acc)
             root.addWidget(self.rej)
             root.addWidget(self.att, 1)
+            root.addWidget(self.temp, 0)
 
     def update_counts(
         self,
@@ -116,6 +125,21 @@ class ScoreboardWidget(QFrame):
         self.acc.set_value(accepted)
         self.rej.set_value(rejected)
         self.att.set_value(max(0, int(attempts)), full=True)
+
+    def update_temp(self, temp_c: int | None) -> None:
+        """Show probe °C on the rightmost row; '--' when missing/unreadable."""
+        if temp_c is None:
+            self.temp.set_text("--")
+            return
+        try:
+            val = int(temp_c)
+        except (TypeError, ValueError):
+            self.temp.set_text("--")
+            return
+        if val < 0:
+            self.temp.set_text("--")
+            return
+        self.temp.set_value(min(999, val))
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
@@ -185,6 +209,12 @@ class ScoreboardOverlayWindow(QWidget):
         attempts: int,
     ) -> None:
         self.board.update_counts(blocks, accepted, rejected, attempts)
+        self.adjustSize()
+        if self.isVisible():
+            self.place_bottom_right()
+
+    def update_temp(self, temp_c: int | None) -> None:
+        self.board.update_temp(temp_c)
         self.adjustSize()
         if self.isVisible():
             self.place_bottom_right()

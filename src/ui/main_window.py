@@ -356,6 +356,7 @@ class MainWindow(QMainWindow):
         self._idle_prep_worker: _IdlePrepWorker | None = None
         self._capacity_blocks = self._load_capacity_blocks()
         self._last_scoreboard = (0, 0, 0, 0)  # blocks, accepted, rejected, attempts
+        self._last_scoreboard_temp: int | None = None
         self._scoreboard_overlay: ScoreboardOverlayWindow | None = None
 
         self._build_menu()
@@ -1907,9 +1908,11 @@ class MainWindow(QMainWindow):
         if stats.temp_readable and stats.gpu_temp is not None:
             extra = " · paused" if stats.paused_thermal else ""
             self.lbl_temp.setText(f"{stats.gpu_temp}°C{extra}")
+            self._update_scoreboard_temp(int(stats.gpu_temp))
             if not self._allow_mine_without_temp():
                 self._refresh_thermal_unsafe_banner(running_without_temp=False)
         else:
+            self._update_scoreboard_temp(None)
             if self.controller.allow_mine_without_temp or self._allow_mine_without_temp():
                 self.lbl_temp.setText("unreadable · thermal protection OFF (unsafe)")
                 self._refresh_thermal_unsafe_banner(running_without_temp=True)
@@ -2105,6 +2108,12 @@ class MainWindow(QMainWindow):
         if self._scoreboard_overlay is not None:
             self._scoreboard_overlay.update_counts(blocks, accepted, rejected, attempts)
 
+    def _update_scoreboard_temp(self, temp_c: int | None) -> None:
+        self._last_scoreboard_temp = temp_c
+        self.scoreboard.update_temp(temp_c)
+        if self._scoreboard_overlay is not None:
+            self._scoreboard_overlay.update_temp(temp_c)
+
     def _maybe_show_scoreboard_overlay(self) -> None:
         if self._tray_exit:
             return
@@ -2114,6 +2123,7 @@ class MainWindow(QMainWindow):
             return
         b, a, r, t = self._last_scoreboard
         self._scoreboard_overlay.update_counts(b, a, r, t)
+        self._scoreboard_overlay.update_temp(self._last_scoreboard_temp)
         self._scoreboard_overlay.show_overlay()
         self._refresh_scoreboard_tray_action()
 
