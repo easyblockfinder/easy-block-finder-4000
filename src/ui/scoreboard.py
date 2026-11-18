@@ -154,21 +154,28 @@ class ScoreboardWidget(QFrame):
             bottom.addStretch(1)
             root.addLayout(bottom)
         else:
+            # Bottom-align digit boxes so ATTEMPTS stays on the same row as
+            # BLK/ACC/REJ/TEMP; NET/GPU/ACC label sits above the ATTEMPTS box only.
             outer = QHBoxLayout(self)
             outer.setContentsMargins(0, 0, 0, 0)
             outer.setSpacing(6)
-            outer.addWidget(self.blk)
-            outer.addWidget(self.acc)
-            outer.addWidget(self.rej)
+            bottom = Qt.AlignmentFlag.AlignBottom
+            outer.addWidget(self.blk, 0, bottom)
+            outer.addWidget(self.acc, 0, bottom)
+            outer.addWidget(self.rej, 0, bottom)
 
-            att_col = QVBoxLayout()
+            att_wrap = QWidget()
+            att_wrap.setObjectName("attWrap")
+            att_col = QVBoxLayout(att_wrap)
             att_col.setContentsMargins(0, 0, 0, 0)
             att_col.setSpacing(2)
-            att_col.addWidget(self.diff_summary)
+            att_col.addWidget(
+                self.diff_summary, 0, Qt.AlignmentFlag.AlignHCenter
+            )
             att_col.addWidget(self.att, 0, Qt.AlignmentFlag.AlignHCenter)
-            outer.addLayout(att_col, 0)
+            outer.addWidget(att_wrap, 0, bottom)
 
-            outer.addWidget(self.temp, 0)
+            outer.addWidget(self.temp, 0, bottom)
             outer.addStretch(1)
 
     def bind_external_summary(self, label: QLabel) -> None:
