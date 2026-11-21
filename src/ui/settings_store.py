@@ -10,6 +10,7 @@ from typing import Any
 
 from app_meta import APP_DATA_DIRNAME, LEGACY_APP_DATA_DIRNAMES
 from mining.app_donation import default_app_donation, normalize_app_donation
+from networks.pool_resolve import normalize_pool_by_network
 from networks.profiles import NETWORK_ORDER, normalize_network_id
 
 
@@ -61,6 +62,8 @@ DEFAULTS: dict[str, Any] = {
     "scoreboard_overlay_enabled": True,
     # First-run machine setup wizard (intensity / thermal / GPU)
     "setup_wizard_done": False,
+    # Per-network pool selection (empty = all defaults; preserves existing installs)
+    "pool_by_network": {},
 }
 
 
@@ -68,6 +71,7 @@ def _normalize_loaded(data: dict[str, Any]) -> dict[str, Any]:
     out = dict(DEFAULTS)
     out["address_by_network"] = dict(DEFAULTS["address_by_network"])
     out["app_donation"] = default_app_donation()
+    out["pool_by_network"] = {}
     for k, v in data.items():
         if k == "address_by_network" and isinstance(v, dict):
             for nid in NETWORK_ORDER:
@@ -79,12 +83,15 @@ def _normalize_loaded(data: dict[str, Any]) -> dict[str, Any]:
                 if reason:
                     cleaned[normalize_network_id(str(nid))] = str(reason)
             out["capacity_blocks"] = cleaned
+        elif k == "pool_by_network":
+            out["pool_by_network"] = normalize_pool_by_network(v)
         elif k == "app_donation":
             out["app_donation"] = normalize_app_donation(v)
         elif k in DEFAULTS and k not in (
             "address_by_network",
             "app_donation",
             "capacity_blocks",
+            "pool_by_network",
         ):
             out[k] = v
     out["selected_network"] = normalize_network_id(str(out.get("selected_network") or "btc"))

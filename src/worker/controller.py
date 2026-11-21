@@ -37,6 +37,11 @@ from mining.best_hash_store import (
     quarantine_corrupt_store,
     upsert_record_if_better,
 )
+from mining.lifetime_stats import add_lifetime_attempts, get_lifetime_attempts
+from networks.pool_input import safe_pool_log_fields
+from networks.pool_resolve import resolve_pool
+from networks.pool_types import ResolvedPoolEndpoint
+from networks.pool_validation import get_validation_profile
 from mining.block_store import (
     STATUS_CANDIDATE,
     STATUS_ORPHAN,
@@ -74,7 +79,8 @@ class MiningStats:
     connected: bool = False
     status: str = "Ready"
     hashrate: float = 0.0
-    total_hashes: int = 0
+    total_hashes: int = 0  # session attempts (reset each start)
+    lifetime_attempts: int = 0  # per-network lifetime (persisted)
     elapsed: float = 0.0
     accepted: int = 0
     rejected: int = 0
@@ -161,6 +167,7 @@ class MiningController:
         self._best_record: Optional[BestHashRecord] = None  # GPU best
         self._accepted_best_record: Optional[BestHashRecord] = None
         self._best_store_ok = True  # False after load failure → skip writes
+        self._pool_endpoint: Optional[ResolvedPoolEndpoint] = None
         self._start_time = 0.0
         self._hash_window: list[tuple[float, float, int]] = []
         self._paused = False
@@ -322,6 +329,8 @@ class MiningController:
         *,
         network_id: str = "btc",
         allow_mine_without_temp: bool = False,
+        pool_endpoint: ResolvedPoolEndpoint | None = None,
+        pool_by_network: dict | None = None,
     ) -> None:
         profile = get_profile(network_id)
         if not profile.mining_ready:
@@ -374,18 +383,38 @@ class MiningController:
             self._donation_active = False
             self.test_mode = test_mode
             self.allow_mine_without_temp = bool(allow_mine_without_temp)
+            ep = pool_endpoint or resolve_pool(profile.id, pool_by_network)
+            if ep.transport == "tls":
+                raise ValueError(
+                    "TLS pool connections are not enabled yet. "
+                    "Use a TCP pool or wait for the TLS update."
+                )
+            self._pool_endpoint = ep
             # Ba etkinse adres do rula
             if is_effectively_enabled(self.app_donation, profile.id):
                 daddr = donation_address_for(self.app_donation, profile.id)
                 dok, derr = validate_address_for_network(profile.id, daddr)
                 if not dok:
                     raise ValueError(f"Donation address invalid: {derr}")
-            stats_url = profile.stats_url_for(self.address)
+            if ep.stats_url_template:
+                try:
+                    stats_url = ep.stats_url_template.format(
+                        address=profile.pool_identity(self.address)
+                    )
+                except (KeyError, ValueError):
+                    stats_url = profile.stats_url_for(self.address)
+            else:
+                stats_url = (
+                    profile.stats_url_for(self.address)
+                    if ep.mode == "default"
+                    else ""
+                )
             self._explorer.configure(
                 status_url=profile.explorer_status_url,
                 block_url=profile.explorer_block_url,
                 kind=profile.explorer_kind or "none",
             )
+            lifetime = get_lifetime_attempts(profile.id)
             raw_loaded = (
                 []
                 if test_mode
@@ -425,6 +454,7 @@ class MiningController:
                 unattributed_shares=0,
                 app_donation_shares=0,
                 donation_active=False,
+                lifetime_attempts=lifetime,
             )
             self._best_broken_pending = False
             self._best_mode_cache = None
@@ -1042,14 +1072,15 @@ class MiningController:
                     return
                 motor_gen = shares.next_generation()
                 self._motor_gen = motor_gen
-                user = self._profile.username_for(addr)
+                user = self._authorize_user(addr)
+                host, port, password = self._pool_conn()
                 try:
                     self._xmrig = XmrigRunner(
                         exe,
-                        host=self._profile.stratum_host,
-                        port=self._profile.stratum_port,
+                        host=host,
+                        port=port,
                         username=user,
-                        password=self._profile.password,
+                        password=password,
                         donate_level=self.xmrig_donate_level,
                         threads=self.cpu_thread_limit,
                         on_snapshot=_on_snap,
@@ -1401,15 +1432,16 @@ class MiningController:
                     return
                 motor_gen = shares.next_generation()
                 self._motor_gen = motor_gen
-                user = self._profile.username_for(addr)
+                user = self._authorize_user(addr)
+                host, port, password = self._pool_conn()
                 self._rigel = RigelRunner(
                     exe,
                     algorithm=algo,
                     coin=coin,
-                    host=self._profile.stratum_host,
-                    port=self._profile.stratum_port,
+                    host=host,
+                    port=port,
                     username=user,
-                    password=self._profile.password,
+                    password=password,
                     device_index=rigel_d,
                     api_port=api_port,
                     on_snapshot=_on_snap,
@@ -1565,26 +1597,47 @@ class MiningController:
             )
         self._mine_loop()
 
+    def _authorize_user(self, address: str) -> str:
+        ident = self._profile.pool_identity(address)
+        ep = self._pool_endpoint
+        if ep is None:
+            return self._profile.username_for(address)
+        return ep.render_username(ident)
+
+    def _pool_conn(self) -> tuple[str, int, str]:
+        ep = self._pool_endpoint
+        if ep is None:
+            return (
+                self._profile.stratum_host,
+                int(self._profile.stratum_port),
+                self._profile.password or "x",
+            )
+        return ep.host, int(ep.port), ep.password or "x"
+
     def _start_stratum_for(self, address: str) -> None:
         with self._motor_ops:
             if self._motor_start_blocked():
                 return
-            user = self._profile.username_for(address)
+            user = self._authorize_user(address)
+            host, port, password = self._pool_conn()
             self._stratum = StratumClient(
-                host=self._profile.stratum_host,
-                port=self._profile.stratum_port,
+                host=host,
+                port=port,
                 on_job=self._on_job,
                 on_difficulty=self._on_difficulty,
                 on_status=self._on_stratum_status,
                 on_submit_result=self._on_submit_result,
                 suggest_difficulty=1.0,
-                password=self._profile.password,
+                password=password,
             )
             self._stratum.start(user)
             self.stats.payout_address = address
+            log_fields = safe_pool_log_fields(
+                host=host, port=port, transport="tcp", username=user, password=password
+            )
             self._log_event(
-                f"Network={self._profile.id} stratum={self._profile.stratum_host}:"
-                f"{self._profile.stratum_port} user={user[:24]}…"
+                f"Network={self._profile.id} stratum={log_fields['host']}:"
+                f"{log_fields['port']} user={str(user)[:24]}…"
                 + (" [donation slice]" if self._donation_active else "")
             )
             self._log_event(
@@ -1735,18 +1788,32 @@ class MiningController:
             gen,
         )
 
-        # Coinbase d l adresi do rulama (aktif madencilik adresi: kullan c veya ba )
+        # Coinbase payout validation — profile flags from validation profile when set
         active_addr = self._mining_address or self.address
+        vprof = get_validation_profile(
+            (self._pool_endpoint.validation_profile_id if self._pool_endpoint else "")
+            or ""
+        )
+        if self._pool_endpoint is None or self._pool_endpoint.mode == "default":
+            fee_num = self._profile.coinbase_pool_fee_num
+            fee_den = self._profile.coinbase_pool_fee_den
+            enforce = self._profile.coinbase_enforce_fee_split
+            require_user = self._profile.coinbase_require_user_payout
+        else:
+            fee_num = vprof.fee_num
+            fee_den = vprof.fee_den
+            enforce = vprof.enforce_fee_split
+            require_user = vprof.require_user_payout
         payout = verify_job_coinbase_payout(
             coinb1=job.coinb1,
             coinb2=job.coinb2,
             extranonce1=job.extranonce1,
             extranonce2_hex=job.extranonce2_hex(),
             payout_address=active_addr,
-            pool_fee_num=self._profile.coinbase_pool_fee_num,
-            pool_fee_den=self._profile.coinbase_pool_fee_den,
-            enforce_fee_split=self._profile.coinbase_enforce_fee_split,
-            require_user_payout=self._profile.coinbase_require_user_payout,
+            pool_fee_num=fee_num,
+            pool_fee_den=fee_den,
+            enforce_fee_split=enforce,
+            require_user_payout=require_user,
         )
         self.stats.coinbase_status = payout.message
         if payout.stop_mining:
@@ -2106,6 +2173,12 @@ class MiningController:
 
             scanned = int(result.scanned)
             self.stats.total_hashes += scanned
+            try:
+                self.stats.lifetime_attempts = add_lifetime_attempts(
+                    self.network_id, scanned
+                )
+            except OSError:
+                pass
             self.stats.last_batch = batch_n
             self.stats.last_scanned = scanned
             self.stats.last_global = result.global_size

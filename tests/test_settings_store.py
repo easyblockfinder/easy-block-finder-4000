@@ -36,6 +36,7 @@ def test_existing_user_keeps_intensity_and_skips_wizard():
     assert data["resume_temp"] == 70
     assert data["setup_wizard_done"] is True
     assert data["scoreboard_overlay_enabled"] is True
+    assert data["pool_by_network"] == {}
 
 
 def test_fresh_install_gets_wizard_and_new_defaults():

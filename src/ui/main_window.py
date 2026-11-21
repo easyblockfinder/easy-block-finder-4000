@@ -586,7 +586,8 @@ class MainWindow(QMainWindow):
         self.lbl_conn_k, self.lbl_conn = _stat_pair("Connection")
         self.lbl_device_k, self.lbl_device = _stat_pair("Device")
         self.lbl_rate_k, self.lbl_rate = _stat_pair("Hash rate")
-        self.lbl_total_k, self.lbl_total = _stat_pair("Total attempts", mono=True)
+        self.lbl_total_k, self.lbl_total = _stat_pair("Session attempts", mono=True)
+        self.lbl_lifetime_k, self.lbl_lifetime = _stat_pair("Lifetime attempts", mono=True)
         self.lbl_time_k, self.lbl_time = _stat_pair("Elapsed")
         self.lbl_shares_k, self.lbl_shares = _stat_pair("Share")
         self.lbl_diff_k, self.lbl_diff = _stat_pair("Server set_difficulty")
@@ -602,6 +603,7 @@ class MainWindow(QMainWindow):
             (self.lbl_device_k, self.lbl_device),
             (self.lbl_rate_k, self.lbl_rate),
             (self.lbl_total_k, self.lbl_total),
+            (self.lbl_lifetime_k, self.lbl_lifetime),
             (self.lbl_time_k, self.lbl_time),
             (self.lbl_shares_k, self.lbl_shares),
             (self.lbl_diff_k, self.lbl_diff),
@@ -823,6 +825,12 @@ class MainWindow(QMainWindow):
 
         self.lbl_rate.setText("0 H/s")
         self.lbl_total.setText("0")
+        try:
+            from mining.lifetime_stats import get_lifetime_attempts
+
+            self.lbl_lifetime.setText(f"{get_lifetime_attempts(self._network_id):,}")
+        except Exception:
+            self.lbl_lifetime.setText("0")
         self.lbl_time.setText("0s")
         self.lbl_shares.setText("accepted 0 / rejected 0")
         self.lbl_conn.setText("Not connected")
@@ -1205,14 +1213,22 @@ class MainWindow(QMainWindow):
         is_managed = self._profile.engine_kind == "managed_external"
         # Native OpenCL counter not on XMR/RVN/ERG — avoid misleading label
         if is_managed:
-            self.lbl_total_k.setText("Total attempts")
+            self.lbl_total_k.setText("Session attempts")
             self.lbl_total.setText("— (external engine)")
+            self.lbl_lifetime_k.setText("Lifetime attempts")
+            self.lbl_lifetime.setText("—")
             self.lbl_work.setText(
                 "External engine: see hash rate and share rows "
-                "(OpenCL total attempts only on BTC/BCH)."
+                "(OpenCL session attempts only on BTC/BCH)."
             )
         else:
-            self.lbl_total_k.setText("Total attempts")
+            self.lbl_total_k.setText("Session attempts")
+            self.lbl_lifetime_k.setText("Lifetime attempts")
+            from mining.lifetime_stats import get_lifetime_attempts
+
+            self.lbl_lifetime.setText(
+                f"{get_lifetime_attempts(self._network_id):,}"
+            )
         if blocked:
             self.lbl_status.setText(blocked)
         elif not ready:
@@ -1811,6 +1827,7 @@ class MainWindow(QMainWindow):
                 test_mode=self.test_mode.isChecked(),
                 network_id=self._network_id,
                 allow_mine_without_temp=allow_no_temp,
+                pool_by_network=self._cfg.get("pool_by_network") or {},
             )
         except Exception as exc:
             from engines.windows_security import looks_like_defender_block
@@ -1898,6 +1915,12 @@ class MainWindow(QMainWindow):
             self.lbl_total.setText("— (external engine)")
         else:
             self.lbl_total.setText(f"{stats.total_hashes:,}")
+            life = getattr(stats, "lifetime_attempts", None)
+            if life is None:
+                from mining.lifetime_stats import get_lifetime_attempts
+
+                life = get_lifetime_attempts(self._network_id)
+            self.lbl_lifetime.setText(f"{int(life):,}")
         self.lbl_time.setText(f"{stats.elapsed:.0f}s")
         self.lbl_shares.setText(f"accepted {stats.accepted} / rejected {stats.rejected}")
         self._update_scoreboard(
