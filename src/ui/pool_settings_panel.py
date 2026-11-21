@@ -46,15 +46,18 @@ class PoolSettingsPanel(QWidget):
         *,
         is_running: Callable[[], bool],
         request_stop: Callable[[], None],
+        get_wallet: Optional[Callable[[], str]] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._is_running = is_running
         self._request_stop = request_stop
+        self._get_wallet = get_wallet or (lambda: "")
         self.on_applied: Optional[Callable[[dict[str, Any]], None]] = None
         self._network_id = "btc"
         self._pool_by_network: dict[str, Any] = {}
         self._loading = False
+        self._testing = False
 
         box = QGroupBox("Mining pool")
         box.setObjectName("poolGroup")
@@ -145,10 +148,21 @@ class PoolSettingsPanel(QWidget):
         self.btn_apply.clicked.connect(self._on_apply)
         self.btn_reset = QPushButton("Reset to default")
         self.btn_reset.clicked.connect(self._on_reset)
+        self.btn_test = QPushButton("Test connection")
+        self.btn_test.setToolTip(
+            "Requires a real mining.notify/job. TCP or authorize alone is not enough."
+        )
+        self.btn_test.clicked.connect(self._on_test)
         row.addWidget(self.btn_apply)
         row.addWidget(self.btn_reset)
+        row.addWidget(self.btn_test)
         row.addStretch(1)
         lay.addLayout(row)
+
+        self.lbl_test = QLabel("")
+        self.lbl_test.setObjectName("tagline")
+        self.lbl_test.setWordWrap(True)
+        lay.addWidget(self.lbl_test)
 
         hint = QLabel(
             "Changing pool while mining requires Stop first. "
@@ -172,6 +186,7 @@ class PoolSettingsPanel(QWidget):
             self.mode.setEnabled(native)
             self.btn_apply.setEnabled(native)
             self.btn_reset.setEnabled(native)
+            self.btn_test.setEnabled(native)
             self._reload_presets()
             sel = self._pool_by_network.get(network_id) or {}
             mode = str(sel.get("mode") or "default") if native else "default"
@@ -360,3 +375,53 @@ class PoolSettingsPanel(QWidget):
         self.load_network(self._network_id, self._pool_by_network)
         if callable(self.on_applied):
             self.on_applied(self._pool_by_network)
+
+    def _on_test(self) -> None:
+        if self._testing:
+            return
+        wallet = (self._get_wallet() or "").strip()
+        if not wallet:
+            QMessageBox.warning(
+                self,
+                "Address required",
+                "Enter a payout address first — the pool test must authorize as that user.",
+            )
+            return
+        draft = {self._network_id: self._draft_selection()}
+        try:
+            ep = resolve_pool(self._network_id, draft)
+        except Exception as exc:
+            QMessageBox.warning(self, "Invalid pool", str(exc))
+            return
+        if ep.transport == "tls":
+            QMessageBox.warning(
+                self,
+                "TLS not enabled",
+                "TLS pool tests require certificate verification (later update). Use TCP.",
+            )
+            return
+        from networks.pool_connection_test import probe_native_pool_connection
+        from networks.profiles import get_profile
+
+        prof = get_profile(self._network_id)
+        username = ep.render_username(prof.pool_identity(wallet))
+        self._testing = True
+        self.btn_test.setEnabled(False)
+        self.lbl_test.setText(f"Testing {ep.host}:{ep.port} (waiting for mining.notify)…")
+        try:
+            result = probe_native_pool_connection(
+                host=ep.host,
+                port=ep.port,
+                username=username,
+                password=ep.password,
+                transport=ep.transport,
+                timeout_s=20.0,
+            )
+        finally:
+            self._testing = False
+            self.btn_test.setEnabled(True)
+        self.lbl_test.setText(result.message)
+        if result.ok:
+            QMessageBox.information(self, "Pool connection OK", result.message)
+        else:
+            QMessageBox.warning(self, "Pool connection failed", result.message)

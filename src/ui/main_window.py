@@ -537,6 +537,7 @@ class MainWindow(QMainWindow):
         self.pool_panel = PoolSettingsPanel(
             is_running=self.controller.is_running,
             request_stop=self._on_stop,
+            get_wallet=lambda: self.address_edit.text(),
         )
         self.pool_panel.on_applied = self._on_pool_applied
         self.pool_panel.load_network(
