@@ -1,8 +1,18 @@
-"""Map user intensity (1–10) × auto-idle scale (0..1) → batch size + inter-batch sleep."""
+"""Native intensity ladder + adaptive auto-idle duty-cycle sleep.
+
+When auto-idle is OFF or scale==1.0, behavior matches the historical
+(intensity → batch, base_sleep) ladder exactly.
+
+When 0 < scale < 1, post-batch wait uses measured batch time T and base sleep B:
+
+    sleep = max(0, ((T + B) / S) - T)
+
+Base sleep is not applied twice. Batch size stays at the user's intensity
+ceiling so duty-cycle tracks that intensity's work unit.
+"""
 
 from __future__ import annotations
 
-# Same ladder as MiningController._INTENSITY (batch, sleep_s).
 _INTENSITY_LADDER: dict[int, tuple[int, float]] = {
     1: (1_048_576, 0.008),
     2: (1_048_576, 0.005),
@@ -15,8 +25,6 @@ _INTENSITY_LADDER: dict[int, tuple[int, float]] = {
     9: (16_777_216, 0.0),
     10: (33_554_432, 0.0),
 }
-
-_MIN_BATCH = 65_536
 
 
 def clamp_intensity(level: int) -> int:
@@ -35,37 +43,53 @@ def clamp_scale(scale: float) -> float:
     return s
 
 
+def intensity_batch_sleep(base_intensity: int) -> tuple[int, float]:
+    """Historical intensity ladder entry (batch, base_sleep B)."""
+    level = clamp_intensity(base_intensity)
+    batch, base_sleep = _INTENSITY_LADDER[level]
+    return int(batch), float(base_sleep)
+
+
+def adaptive_duty_sleep(batch_time_s: float, base_sleep_s: float, scale: float) -> float:
+    """
+    Post-batch wait for scale S in (0, 1].
+
+    sleep = max(0, ((T + B) / S) - T)
+
+    S >= 1 → returns B (same as legacy inter-batch sleep; T unused for wait).
+    S <= 0 → returns 0 (caller must pause scanning entirely).
+    """
+    s = clamp_scale(scale)
+    b = max(0.0, float(base_sleep_s))
+    t = max(0.0, float(batch_time_s))
+    if s <= 0.0:
+        return 0.0
+    if s >= 1.0:
+        return b
+    return max(0.0, ((t + b) / s) - t)
+
+
+def update_ema(previous: float | None, sample: float, *, alpha: float = 0.3) -> float:
+    """Light EMA for batch-time smoothing; alpha in (0, 1]."""
+    a = min(1.0, max(0.05, float(alpha)))
+    x = max(0.0, float(sample))
+    if previous is None:
+        return x
+    return a * x + (1.0 - a) * float(previous)
+
+
+# Back-compat name used by older tests — full scale only (no shrink).
 def scaled_batch_sleep(base_intensity: int, scale: float) -> tuple[int, float]:
     """
-    Fine-grained work scaling under the user's intensity ceiling.
-
-    scale=1.0 → exact ladder entry for base_intensity.
-    scale=0.0 → caller should pause (batch unused); returns (0, 0.0).
-    Intermediate: shrink batch toward a floor and stretch sleep so effective
-    throughput tracks scale without only snapping to integer intensity steps.
+    Deprecated path for tests: at S>=1 return ladder; at S<=0 return (0,0);
+    at partial S return full batch + placeholder sleep (real adaptive uses
+    adaptive_duty_sleep after measuring T).
     """
-    level = clamp_intensity(base_intensity)
+    batch, base_sleep = intensity_batch_sleep(base_intensity)
     s = clamp_scale(scale)
-    base_batch, base_sleep = _INTENSITY_LADDER[level]
     if s <= 0.0:
         return 0, 0.0
     if s >= 1.0:
-        return int(base_batch), float(base_sleep)
-
-    # Batch: linear in scale, floored so OpenCL still gets useful work.
-    batch = int(round(base_batch * s))
-    batch = max(_MIN_BATCH, min(base_batch, batch))
-
-    # Sleep: at full scale use ladder sleep; as scale drops, add extra idle time
-    # approximating (1/s - 1) * kernel_budget. Use base_sleep as minimum.
-    # Effective duty ≈ s when base_sleep==0 by injecting sleep proportional to
-    # missing capacity (assume ~kernel slot ~ batch-relative constant).
-    if base_sleep <= 0.0:
-        # Invent a small reference period so %10 is meaningfully quieter.
-        ref = 0.002
-        sleep_s = ref * (1.0 / s - 1.0)
-    else:
-        sleep_s = base_sleep / s
-    # Cap pathological sleeps
-    sleep_s = min(2.0, max(0.0, float(sleep_s)))
-    return batch, sleep_s
+        return batch, base_sleep
+    # Without T, approximate with T=0 → sleep = B/S (not used by controller).
+    return batch, adaptive_duty_sleep(0.0, base_sleep, s)

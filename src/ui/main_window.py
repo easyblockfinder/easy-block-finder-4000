@@ -1990,15 +1990,20 @@ class MainWindow(QMainWindow):
             else ("Connected" if stats.connected else "Not connected")
         )
         mode = getattr(stats, "activity_mode", "off") or "off"
-        scale = float(getattr(stats, "activity_scale", 1.0) or 1.0)
+        ui = (getattr(stats, "activity_ui", "") or "").strip()
         if mode == "off":
             self.lbl_activity.setText("Off")
             activity_tip = ""
+        elif ui:
+            self.lbl_activity.setText(ui)
+            activity_tip = "ACTIVE MODE" if "ACTIVE" in ui else (
+                "IDLE MODE" if "IDLE" in ui else ui
+            )
         elif mode == "active":
-            self.lbl_activity.setText(f"ACTIVE MODE · {scale * 100:.0f}% capacity")
+            self.lbl_activity.setText("ACTIVE MODE · Mining paused")
             activity_tip = "ACTIVE MODE"
         elif mode == "idle":
-            self.lbl_activity.setText(f"IDLE MODE · {scale * 100:.0f}% capacity")
+            self.lbl_activity.setText("IDLE MODE · Mining resumed")
             activity_tip = "IDLE MODE"
         else:
             self.lbl_activity.setText(str(mode))
@@ -2504,7 +2509,12 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self._cfg, self)
         dlg.form.pick_gpu_clicked.connect(self._on_pick_gpu)
-        dlg.form.set_rigel_binary_idle(self._profile.engine_kind == "managed_external" and self._network_id != "xmr")
+        if self._network_id == "xmr":
+            dlg.form.set_binary_idle_ui(True, engine="xmr")
+        elif self._profile.engine_kind == "managed_external":
+            dlg.form.set_binary_idle_ui(True, engine="rigel")
+        else:
+            dlg.form.set_binary_idle_ui(False, engine="native")
         if dlg.exec():
             vals = dlg.values()
             overlay = bool(vals.pop("scoreboard_overlay_enabled", True))

@@ -44,7 +44,11 @@ from networks.pool_resolve import resolve_pool
 from networks.pool_types import ResolvedPoolEndpoint
 from networks.pool_validation import get_validation_profile
 from worker.idle_policy import IdleMiningPolicy, IdlePolicyState
-from worker.work_scale import scaled_batch_sleep
+from worker.work_scale import (
+    adaptive_duty_sleep,
+    intensity_batch_sleep,
+    update_ema,
+)
 from mining.block_store import (
     STATUS_CANDIDATE,
     STATUS_ORPHAN,
@@ -138,6 +142,7 @@ class MiningStats:
     activity_mode: str = "off"  # off | active | idle (auto-idle feature)
     activity_scale: float = 1.0  # 0..1 of configured capacity
     paused_idle: bool = False
+    activity_ui: str = ""  # human Status text (no fake hashrate %)
 
 
 class MiningController:
@@ -209,6 +214,8 @@ class MiningController:
         self._idle_scale = 1.0
         self._xmrig_idle_paused = False
         self._rigel_idle_paused = False
+        self._ema_batch_s: float | None = None
+        self._activity_ui: str = ""  # honest Status label for auto-idle
 
     def update_settings(self, intensity: int, pause_temp: int, resume_temp: int) -> None:
         self.intensity = max(1, min(10, int(intensity)))
@@ -249,6 +256,39 @@ class MiningController:
         self.stats.activity_scale = float(state.scale)
         # paused_idle applied by engine adapters when scale==0 and not thermal/stopped
         return state
+
+    def _set_activity_ui(self, text: str) -> None:
+        self._activity_ui = text or ""
+        self.stats.activity_ui = self._activity_ui
+
+    def _interruptible_wait(
+        self,
+        total_s: float,
+        *,
+        chunk_s: float = 0.05,
+        abort_if_active: bool = False,
+    ) -> bool:
+        """
+        Wait up to total_s in small slices. Returns False if stopped or
+        (when abort_if_active) user became ACTIVE and we should leave long IDLE wait.
+        """
+        remaining = max(0.0, float(total_s))
+        while remaining > 1e-6:
+            if self._stop.is_set():
+                return False
+            if abort_if_active and self._idle_policy.enabled:
+                # Re-sample activity so long duty waits do not delay ACTIVE.
+                probe = self._idle_policy.evaluate(
+                    idle_s=idle_seconds(), force_active=False
+                )
+                if probe.mode == "active":
+                    self.stats.activity_mode = probe.mode
+                    self.stats.activity_scale = float(probe.scale)
+                    return False
+            step = min(chunk_s, remaining)
+            self._stop.wait(step)
+            remaining -= step
+        return not self._stop.is_set()
 
     def update_cpu_options(
         self,
@@ -1274,10 +1314,15 @@ class MiningController:
                     self._stop.wait(1.0)
                     continue
 
-                # Auto-idle: HTTP pause/resume (no process restart). Intermediate %
-                # is not faked — 0% pauses; >0% resumes at configured thread ceiling.
+                # XMRig: binary only (no live thread %). ACTIVE→pause, IDLE→resume
+                # at configured cpu_thread_limit. HTTP failure does not flip state.
                 idle_state = self._eval_idle_policy()
-                want_pause = idle_state.scale <= 0.0
+                if idle_state.mode == "off":
+                    want_pause = False
+                elif idle_state.mode == "active":
+                    want_pause = True
+                else:
+                    want_pause = False
                 if want_pause != getattr(self, "_xmrig_idle_paused", False):
                     xm = self._xmrig
                     if xm is not None and xm.is_running():
@@ -1285,23 +1330,35 @@ class MiningController:
                             if xm.pause_mining():
                                 self._xmrig_idle_paused = True
                                 self.stats.paused_idle = True
-                                self._log_event(
-                                    "XMRig HTTP pause (auto-idle ACTIVE / 0% scale)"
-                                )
+                                self._set_activity_ui("ACTIVE MODE · Mining paused")
+                                self._log_event("XMRig HTTP pause (auto-idle ACTIVE)")
                             else:
+                                self._set_activity_ui(
+                                    "ACTIVE MODE · Pause failed (still mining)"
+                                )
                                 self._log_event("XMRig HTTP pause failed")
                         else:
                             if xm.resume_mining():
                                 self._xmrig_idle_paused = False
                                 self.stats.paused_idle = False
+                                self._set_activity_ui("IDLE MODE · Mining resumed")
                                 self._log_event(
-                                    "XMRig HTTP resume (auto-idle — configured threads)"
+                                    "XMRig HTTP resume (configured thread limit)"
                                 )
                             else:
+                                self._set_activity_ui(
+                                    "IDLE MODE · Resume failed (still paused)"
+                                )
                                 self._log_event("XMRig HTTP resume failed")
                     self.stats.paused_idle = bool(
                         getattr(self, "_xmrig_idle_paused", False)
                     )
+                elif idle_state.mode == "off":
+                    self._set_activity_ui("")
+                elif self._xmrig_idle_paused:
+                    self._set_activity_ui("ACTIVE MODE · Mining paused")
+                else:
+                    self._set_activity_ui("IDLE MODE · Mining resumed")
 
                 want = self._desired_donation_active()
                 if want != self._donation_active:
@@ -1663,6 +1720,7 @@ class MiningController:
                         break
                     self._rigel_idle_paused = True
                     self.stats.paused_idle = True
+                    self._set_activity_ui("ACTIVE MODE · Mining paused")
                     self.stats.coinbase_status = (
                         "ACTIVE MODE (Rigel): mining paused. Resume on IDLE may "
                         "reconnect the pool and rebuild DAG."
@@ -1679,8 +1737,11 @@ class MiningController:
                     if self._rigel is not None:
                         self._rigel_idle_paused = False
                         self.stats.paused_idle = False
+                        self._set_activity_ui("IDLE MODE · Mining resumed")
                         self.stats.coinbase_status = ""
                 self.stats.paused_idle = bool(self._rigel_idle_paused)
+                if idle_state.mode == "off":
+                    self._set_activity_ui("")
                 if self._rigel_idle_paused:
                     self._emit()
                     self._stop.wait(1.0)
@@ -2255,22 +2316,31 @@ class MiningController:
             if not self._thermal_gate():
                 # Thermal outranks auto-idle — do not hash; stratum stays up.
                 self.stats.paused_idle = False
+                self._set_activity_ui("")
                 self._emit()
-                self._stop.wait(0.5)
+                self._interruptible_wait(0.5)
                 continue
 
             idle_state = self._eval_idle_policy()
             self._idle_scale = float(idle_state.scale)
-            if idle_state.scale <= 0.0:
+            auto_on = idle_state.mode != "off"
+            if auto_on and idle_state.scale <= 0.0:
                 self.stats.paused_idle = True
+                self._set_activity_ui("ACTIVE MODE · Mining paused")
                 self.stats.status = (
-                    f"{idle_state.mode.upper()} MODE — hashing paused (0% of configured capacity). "
-                    "Pool connection and jobs still update."
+                    "ACTIVE MODE — hashing paused. Pool connection and jobs still update."
                 )
                 self._emit()
-                self._stop.wait(0.25)
+                self._interruptible_wait(0.25)
                 continue
             self.stats.paused_idle = False
+            if auto_on:
+                if idle_state.mode == "idle":
+                    self._set_activity_ui("IDLE MODE · Duty-cycle scaled")
+                else:
+                    self._set_activity_ui("ACTIVE MODE · Duty-cycle scaled")
+            else:
+                self._set_activity_ui("")
 
             with self._job_lock:
                 job = self._job
@@ -2278,16 +2348,13 @@ class MiningController:
                     job = None
 
             if job is None:
-                self._stop.wait(0.1)
+                self._interruptible_wait(0.1)
                 self._emit()
                 continue
 
-            batch_n, sleep_s = scaled_batch_sleep(self.intensity, idle_state.scale)
-            if batch_n <= 0:
-                self.stats.paused_idle = True
-                self._stop.wait(0.25)
-                self._emit()
-                continue
+            # Auto-idle OFF or S>=1: exact historical ladder. Partial S: full
+            # intensity batch + adaptive sleep from measured T (base sleep once).
+            batch_n, base_sleep = intensity_batch_sleep(self.intensity)
             with self._job_lock:
                 if self._job is not job or not job.accept_new_work():
                     continue
@@ -2298,7 +2365,7 @@ class MiningController:
                 )
 
             if work is None:
-                self._stop.wait(0.01)
+                self._interruptible_wait(0.01)
                 continue
 
             snap = work.snapshot
@@ -2339,8 +2406,20 @@ class MiningController:
             except Exception as exc:
                 self.stats.status = f"GPU scan error: {exc}"
                 self._emit()
-                self._stop.wait(1.0)
+                self._interruptible_wait(1.0)
                 continue
+
+            batch_time_s = max(0.0, t1 - t0)
+            if auto_on and idle_state.scale < 1.0:
+                self._ema_batch_s = update_ema(self._ema_batch_s, batch_time_s)
+                t_for_duty = float(self._ema_batch_s or batch_time_s)
+                sleep_s = adaptive_duty_sleep(
+                    t_for_duty, base_sleep, idle_state.scale
+                )
+            else:
+                # OFF or S==1: historical base sleep only (no adaptive formula).
+                sleep_s = float(base_sleep)
+                self._ema_batch_s = None
 
             scanned = int(result.scanned)
             self.stats.total_hashes += scanned
@@ -2394,7 +2473,10 @@ class MiningController:
             self._track_best_hash(snap, result, verified_list)
             self._emit()
             if sleep_s > 0:
-                self._stop.wait(sleep_s)
+                self._interruptible_wait(
+                    sleep_s,
+                    abort_if_active=bool(auto_on and idle_state.scale < 1.0),
+                )
 
     def _handle_verified(self, work: WorkBatch, verified: dict) -> None:
         snap = work.snapshot

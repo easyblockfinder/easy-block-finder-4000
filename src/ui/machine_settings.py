@@ -134,11 +134,8 @@ class MachineSettingsForm(QWidget):
         lay.addLayout(idle_form)
 
         self.lbl_idle_note = QLabel(
-            "BTC/BCH: percentages finely scale your Intensity (1–10) ceiling via batch/sleep. "
-            "XMR: 0% = HTTP pause (pool stays); any %>0 resumes at your CPU thread limit "
-            "(intermediate % is not faked). "
-            "RVN/ERG (Rigel): ACTIVE pauses / IDLE resumes at configured capacity "
-            "(pool may reconnect; DAG may rebuild)."
+            "BTC/BCH: adaptive duty-cycle under your Intensity ceiling (not a guaranteed "
+            "hashrate %). XMR/Rigel: binary pause/resume only — % controls hide for those coins."
         )
         self.lbl_idle_note.setObjectName("tagline")
         self.lbl_idle_note.setWordWrap(True)
@@ -182,10 +179,17 @@ class MachineSettingsForm(QWidget):
             w.setEnabled(show_pct)
             w.setVisible(not binary)
 
-    def set_rigel_binary_idle(self, binary: bool) -> None:
-        """RVN/ERG: hide unsupported live %; timeout + toggle remain."""
+    def set_binary_idle_ui(self, binary: bool, *, engine: str = "") -> None:
+        """Hide unsupported live % for XMR/Rigel; timeout + toggle remain."""
         self._rigel_binary_idle = bool(binary)
-        if binary:
+        eng = (engine or "").lower()
+        if binary and eng == "xmr":
+            self.lbl_idle_note.setText(
+                "XMR (XMRig): Automatic Idle is binary — ACTIVE pauses via localhost "
+                "HTTP (token), IDLE resumes at your CPU thread limit. Live % scaling "
+                "is not available. Percentages are not applied as hashrate."
+            )
+        elif binary:
             self.lbl_idle_note.setText(
                 "RVN/ERG (Rigel): Automatic Idle uses binary ACTIVE=pause / IDLE=resume "
                 "at your configured capacity. Live intensity % is not available. "
@@ -193,13 +197,16 @@ class MachineSettingsForm(QWidget):
             )
         else:
             self.lbl_idle_note.setText(
-                "BTC/BCH: percentages finely scale your Intensity (1–10) ceiling via batch/sleep. "
-                "XMR: 0% = HTTP pause (pool stays); any %>0 resumes at your CPU thread limit "
-                "(intermediate % is not faked). "
-                "RVN/ERG (Rigel): ACTIVE pauses / IDLE resumes at configured capacity "
-                "(pool may reconnect; DAG may rebuild)."
+                "BTC/BCH: auto-idle uses adaptive duty-cycle from measured batch time "
+                "under your Intensity (1–10) ceiling. Values are work-duty targets, "
+                "not guaranteed hashrate or GPU utilization. "
+                "XMR/Rigel use binary pause/resume (no live %)."
             )
         self._sync_idle_enabled()
+
+    def set_rigel_binary_idle(self, binary: bool) -> None:
+        """Back-compat alias."""
+        self.set_binary_idle_ui(binary, engine="rigel" if binary else "")
 
     def _on_change(self, *_args: Any) -> None:
         self._refresh_thermal_hint()
