@@ -44,6 +44,7 @@ from networks.pool_resolve import resolve_pool
 from networks.pool_types import ResolvedPoolEndpoint
 from networks.pool_validation import get_validation_profile
 from worker.idle_policy import IdleMiningPolicy, IdlePolicyState
+from worker.work_scale import scaled_batch_sleep
 from mining.block_store import (
     STATUS_CANDIDATE,
     STATUS_ORPHAN,
@@ -2171,9 +2172,24 @@ class MiningController:
                 continue
 
             if not self._thermal_gate():
+                # Thermal outranks auto-idle — do not hash; stratum stays up.
+                self.stats.paused_idle = False
                 self._emit()
                 self._stop.wait(0.5)
                 continue
+
+            idle_state = self._eval_idle_policy()
+            self._idle_scale = float(idle_state.scale)
+            if idle_state.scale <= 0.0:
+                self.stats.paused_idle = True
+                self.stats.status = (
+                    f"{idle_state.mode.upper()} MODE — hashing paused (0% of configured capacity). "
+                    "Pool connection and jobs still update."
+                )
+                self._emit()
+                self._stop.wait(0.25)
+                continue
+            self.stats.paused_idle = False
 
             with self._job_lock:
                 job = self._job
@@ -2185,7 +2201,12 @@ class MiningController:
                 self._emit()
                 continue
 
-            batch_n, sleep_s = _INTENSITY.get(self.intensity, _INTENSITY[1])
+            batch_n, sleep_s = scaled_batch_sleep(self.intensity, idle_state.scale)
+            if batch_n <= 0:
+                self.stats.paused_idle = True
+                self._stop.wait(0.25)
+                self._emit()
+                continue
             with self._job_lock:
                 if self._job is not job or not job.accept_new_work():
                     continue
