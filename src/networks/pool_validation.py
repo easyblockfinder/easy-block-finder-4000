@@ -25,6 +25,18 @@ _PROFILES: dict[str, ValidationProfile] = {
         fee_num=2,
         fee_den=100,
     ),
+    "public_pool_btc_solo": ValidationProfile(
+        id="public_pool_btc_solo",
+        enforce_fee_split=False,
+        require_user_payout=True,
+        fee_num=0,
+        fee_den=100,
+        payout_unverified_banner=True,
+        banner_text=(
+            "SOLO pool (Public Pool, 0% fee advertised) — coinbase payout layout "
+            "is enforced for your address when possible; confirm on the pool page."
+        ),
+    ),
     "bch_pool_wallet": ValidationProfile(
         id="bch_pool_wallet",
         enforce_fee_split=False,

@@ -128,6 +128,10 @@ class MiningStats:
     accepted_best_hash_be_hex: Optional[str] = None
     accepted_record_broken: bool = False  # one-shot Status celebration
     best_hash_mode: str = "gpu_batch"
+    pool_display: str = ""
+    pool_kind: str = "solo"
+    pool_mode: str = "default"
+    pool_banner: str = ""
 
 
 class MiningController:
@@ -415,6 +419,13 @@ class MiningController:
                 kind=profile.explorer_kind or "none",
             )
             lifetime = get_lifetime_attempts(profile.id)
+            vprof_start = get_validation_profile(ep.validation_profile_id)
+            pool_banner = ""
+            if ep.mode != "default" and vprof_start.payout_unverified_banner:
+                pool_banner = vprof_start.banner_text or ""
+            elif ep.pool_kind == "shared":
+                pool_banner = get_validation_profile("shared_pool").banner_text
+            kind_label = str(ep.pool_kind or "unknown").upper()
             raw_loaded = (
                 []
                 if test_mode
@@ -455,6 +466,12 @@ class MiningController:
                 app_donation_shares=0,
                 donation_active=False,
                 lifetime_attempts=lifetime,
+                pool_display=ep.display_name or f"{ep.host}:{ep.port}",
+                pool_kind=ep.pool_kind,
+                pool_mode=ep.mode,
+                pool_banner=pool_banner,
+                coinbase_status=pool_banner
+                or (f"Pool kind: {kind_label}" if ep.mode != "default" else ""),
             )
             self._best_broken_pending = False
             self._best_mode_cache = None

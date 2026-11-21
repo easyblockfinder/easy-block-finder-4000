@@ -532,6 +532,26 @@ class MainWindow(QMainWindow):
         self.test_mode.toggled.connect(self._persist_form)
         s_layout.addWidget(self.test_mode)
 
+        from ui.pool_settings_panel import PoolSettingsPanel
+
+        self.pool_panel = PoolSettingsPanel(
+            is_running=self.controller.is_running,
+            request_stop=self._on_stop,
+        )
+        self.pool_panel.on_applied = self._on_pool_applied
+        self.pool_panel.load_network(
+            self._network_id, self._cfg.get("pool_by_network") or {}
+        )
+        s_layout.addWidget(self.pool_panel)
+
+        self.lbl_pool_banner = QLabel("")
+        self.lbl_pool_banner.setWordWrap(True)
+        self.lbl_pool_banner.setStyleSheet(
+            "color: #b71c1c; font-weight: 600; padding: 4px 0;"
+        )
+        self.lbl_pool_banner.setVisible(False)
+        s_layout.addWidget(self.lbl_pool_banner)
+
         settings_hint = QLabel(
             "Intensity, temperature limits, CPU threads, and GPU pick are in "
             "Settings (menu → Settings…)."
@@ -1191,10 +1211,19 @@ class MainWindow(QMainWindow):
     def _apply_network_to_ui(self) -> None:
         self._profile = get_profile(self._network_id)
         self.setWindowTitle(f"{APP_NAME} — {self._profile.display_name}")
+        from networks.pool_resolve import resolve_pool
+
+        ep = resolve_pool(self._network_id, self._cfg.get("pool_by_network") or {})
+        kind = str(ep.pool_kind or "solo").upper()
         self.lbl_network_badge.setText(
             f"Network: {self._profile.display_name}  ·  {self._profile.algorithm}  ·  "
-            f"{self._profile.stratum_host}:{self._profile.stratum_port}"
+            f"{ep.host}:{ep.port}  ·  {kind}"
         )
+        if hasattr(self, "pool_panel"):
+            self.pool_panel.load_network(
+                self._network_id, self._cfg.get("pool_by_network") or {}
+            )
+            self._refresh_pool_banner()
         self.lbl_tagline.setText(
             f"{self._profile.hardware_hint} · no earnings guarantee · "
             f"accepted share ≠ payout · pool: {self._profile.pool_fee_note} · "
@@ -1491,6 +1520,32 @@ class MainWindow(QMainWindow):
             _restore()
             QTimer.singleShot(0, _restore)
 
+    def _on_pool_applied(self, pool_by_network: dict) -> None:
+        save_settings({"pool_by_network": pool_by_network})
+        self._cfg = load_settings()
+        self._refresh_pool_banner()
+
+    def _refresh_pool_banner(self) -> None:
+        from networks.pool_resolve import resolve_pool
+        from networks.pool_validation import get_validation_profile
+
+        ep = resolve_pool(self._network_id, self._cfg.get("pool_by_network") or {})
+        vp = get_validation_profile(ep.validation_profile_id)
+        text = ""
+        if ep.pool_kind == "shared":
+            text = vp.banner_text or (
+                "SHARED pool — do not expect a full solo block reward."
+            )
+        elif vp.payout_unverified_banner and vp.banner_text:
+            text = vp.banner_text
+        elif ep.mode != "default" and ep.pool_kind == "unknown":
+            text = get_validation_profile("unknown_custom").banner_text
+        if text:
+            self.lbl_pool_banner.setText(text)
+            self.lbl_pool_banner.setVisible(True)
+        else:
+            self.lbl_pool_banner.setVisible(False)
+
     def _persist_form(self) -> None:
         addr = self.address_edit.text().strip()
         by_net = dict(self._cfg.get("address_by_network") or {})
@@ -1520,6 +1575,7 @@ class MainWindow(QMainWindow):
                     self._cfg.get("scoreboard_overlay_enabled", True)
                 ),
                 "setup_wizard_done": bool(self._cfg.get("setup_wizard_done", False)),
+                "pool_by_network": self._cfg.get("pool_by_network") or {},
             }
         )
         self._cfg = load_settings()
@@ -1951,11 +2007,21 @@ class MainWindow(QMainWindow):
             self.lbl_diff.setText("—")
         self.lbl_job.setText(stats.current_job_id or "—")
         self.lbl_payout.setText(stats.payout_address or "—")
-        self.lbl_coinbase.setText(stats.coinbase_status or "—")
+        coinbase = stats.coinbase_status or "—"
+        banner = getattr(stats, "pool_banner", "") or ""
+        kind = getattr(stats, "pool_kind", "") or ""
+        if banner and banner not in coinbase:
+            coinbase = f"{coinbase} | {banner}" if coinbase != "—" else banner
+        if kind and kind != "solo":
+            coinbase = f"[{kind.upper()}] {coinbase}"
+        self.lbl_coinbase.setText(coinbase)
         if stats.block_store_error:
             self.lbl_coinbase.setText(
-                (stats.coinbase_status or "") + f" | Store: {stats.block_store_error}"
+                coinbase + f" | Store: {stats.block_store_error}"
             )
+        if banner:
+            self.lbl_pool_banner.setText(banner)
+            self.lbl_pool_banner.setVisible(True)
         if stats.ckpool_stats_url:
             if self._network_id == "xmr":
                 self.lbl_stats_url.setText(

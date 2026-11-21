@@ -44,6 +44,9 @@ class ResolvedPoolEndpoint:
         w = (wallet or "").strip()
         worker = (self.worker or "").strip()
         fmt = self.username_format or "{wallet}"
+        # Empty worker → use wallet-only equivalent of dotted formats.
+        if not worker and fmt in ("{wallet}.{worker}", "{address}.{worker}"):
+            fmt = "{wallet}"
         # Support both {wallet} and legacy {address} placeholder.
         try:
             return fmt.format(wallet=w, address=w, worker=worker)
