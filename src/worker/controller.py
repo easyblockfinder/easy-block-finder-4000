@@ -207,6 +207,8 @@ class MiningController:
         self._idle_policy = IdleMiningPolicy()
         self._idle_force_active = False
         self._idle_scale = 1.0
+        self._xmrig_idle_paused = False
+        self._rigel_idle_paused = False
 
     def update_settings(self, intensity: int, pause_temp: int, resume_temp: int) -> None:
         self.intensity = max(1, min(10, int(intensity)))
@@ -1148,6 +1150,7 @@ class MiningController:
                         ),
                     )
                     self._xmrig.start()
+                    self._xmrig_idle_paused = False
                 except Exception as exc:
                     from engines.windows_security import (
                         defender_exclusion_help,
@@ -1156,6 +1159,7 @@ class MiningController:
                     )
 
                     self._xmrig = None
+                    self._xmrig_idle_paused = False
                     if looks_like_defender_block(exc) or exe_quarantined_or_missing(exe):
                         self.stats.status = defender_exclusion_help("XMRig")
                     else:
@@ -1255,6 +1259,7 @@ class MiningController:
 
                 if self._paused:
                     # Motor kapal yken ba dilimini adreste tut (resume do ru adres)
+                    self.stats.paused_idle = False
                     want = self._desired_donation_active()
                     if want != self._donation_active:
                         self._donation_active = want
@@ -1268,6 +1273,35 @@ class MiningController:
                     self._emit()
                     self._stop.wait(1.0)
                     continue
+
+                # Auto-idle: HTTP pause/resume (no process restart). Intermediate %
+                # is not faked — 0% pauses; >0% resumes at configured thread ceiling.
+                idle_state = self._eval_idle_policy()
+                want_pause = idle_state.scale <= 0.0
+                if want_pause != getattr(self, "_xmrig_idle_paused", False):
+                    xm = self._xmrig
+                    if xm is not None and xm.is_running():
+                        if want_pause:
+                            if xm.pause_mining():
+                                self._xmrig_idle_paused = True
+                                self.stats.paused_idle = True
+                                self._log_event(
+                                    "XMRig HTTP pause (auto-idle ACTIVE / 0% scale)"
+                                )
+                            else:
+                                self._log_event("XMRig HTTP pause failed")
+                        else:
+                            if xm.resume_mining():
+                                self._xmrig_idle_paused = False
+                                self.stats.paused_idle = False
+                                self._log_event(
+                                    "XMRig HTTP resume (auto-idle — configured threads)"
+                                )
+                            else:
+                                self._log_event("XMRig HTTP resume failed")
+                    self.stats.paused_idle = bool(
+                        getattr(self, "_xmrig_idle_paused", False)
+                    )
 
                 want = self._desired_donation_active()
                 if want != self._donation_active:

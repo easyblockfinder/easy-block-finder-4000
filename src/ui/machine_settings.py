@@ -134,9 +134,11 @@ class MachineSettingsForm(QWidget):
         lay.addLayout(idle_form)
 
         self.lbl_idle_note = QLabel(
-            "Percentages scale your current Intensity (BTC/BCH) and CPU thread limit (XMR). "
-            "RVN/ERG (Rigel): ACTIVE pauses mining, IDLE resumes at full configured capacity "
-            "(pool may reconnect; DAG may rebuild). Unsupported live % is not offered there."
+            "BTC/BCH: percentages finely scale your Intensity (1–10) ceiling via batch/sleep. "
+            "XMR: 0% = HTTP pause (pool stays); any %>0 resumes at your CPU thread limit "
+            "(intermediate % is not faked). "
+            "RVN/ERG (Rigel): ACTIVE pauses / IDLE resumes at configured capacity "
+            "(pool may reconnect; DAG may rebuild)."
         )
         self.lbl_idle_note.setObjectName("tagline")
         self.lbl_idle_note.setWordWrap(True)

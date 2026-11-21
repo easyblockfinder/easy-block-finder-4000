@@ -362,6 +362,17 @@ class XmrigRunner:
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
+    def pause_mining(self) -> bool:
+        """HTTP pause — keeps process/pool; localhost + token only."""
+        from engines.xmrig_control import pause_xmrig
+
+        return pause_xmrig(http_port=self.http_port, http_token=self.http_token)
+
+    def resume_mining(self) -> bool:
+        from engines.xmrig_control import resume_xmrig
+
+        return resume_xmrig(http_port=self.http_port, http_token=self.http_token)
+
     def _api_get(self, path: str) -> dict[str, Any]:
         url = f"http://127.0.0.1:{self.http_port}{path}"
         req = urllib.request.Request(
