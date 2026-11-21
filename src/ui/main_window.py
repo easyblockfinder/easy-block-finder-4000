@@ -1612,6 +1612,20 @@ class MainWindow(QMainWindow):
         return bool(self._cfg.get("pause_on_battery", True))
 
     def _push_settings(self) -> None:
+        import time as _time
+
+        now = _time.time()
+        last = getattr(self, "_idle_wall_watch", None)
+        self._idle_wall_watch = now
+        # Sleep/hibernate: wall clock jumped while our 1s timer was suspended.
+        if (
+            last is not None
+            and (now - last) >= 5.0
+            and bool(self._cfg.get("auto_idle_mining", False))
+            and self.controller.is_running()
+        ):
+            self.controller.force_idle_active()
+
         self.controller.update_settings(
             self._intensity_val(),
             self._pause_temp_val(),
@@ -1979,12 +1993,24 @@ class MainWindow(QMainWindow):
         scale = float(getattr(stats, "activity_scale", 1.0) or 1.0)
         if mode == "off":
             self.lbl_activity.setText("Off")
+            activity_tip = ""
         elif mode == "active":
             self.lbl_activity.setText(f"ACTIVE MODE · {scale * 100:.0f}% capacity")
+            activity_tip = "ACTIVE MODE"
         elif mode == "idle":
             self.lbl_activity.setText(f"IDLE MODE · {scale * 100:.0f}% capacity")
+            activity_tip = "IDLE MODE"
         else:
             self.lbl_activity.setText(str(mode))
+            activity_tip = str(mode)
+        if self.tray is not None and bool(self._cfg.get("auto_idle_mining", False)):
+            base = APP_NAME
+            if self.controller.is_running() and activity_tip:
+                self.tray.setToolTip(f"{base} — {activity_tip}")
+            elif self.controller.is_running():
+                self.tray.setToolTip(f"{base} — mining")
+            else:
+                self.tray.setToolTip(base)
         self.lbl_device.setText(stats.device_name or "—")
         rate = stats.hashrate
         if rate >= 1_000_000:
