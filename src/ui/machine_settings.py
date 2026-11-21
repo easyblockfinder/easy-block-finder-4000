@@ -175,8 +175,31 @@ class MachineSettingsForm(QWidget):
 
     def _sync_idle_enabled(self, *_args: Any) -> None:
         on = self.auto_idle.isChecked()
-        for w in (self.idle_timeout, self.idle_active_pct, self.idle_idle_pct):
-            w.setEnabled(on)
+        binary = bool(getattr(self, "_rigel_binary_idle", False))
+        self.idle_timeout.setEnabled(on)
+        show_pct = on and not binary
+        for w in (self.idle_active_pct, self.idle_idle_pct):
+            w.setEnabled(show_pct)
+            w.setVisible(not binary)
+
+    def set_rigel_binary_idle(self, binary: bool) -> None:
+        """RVN/ERG: hide unsupported live %; timeout + toggle remain."""
+        self._rigel_binary_idle = bool(binary)
+        if binary:
+            self.lbl_idle_note.setText(
+                "RVN/ERG (Rigel): Automatic Idle uses binary ACTIVE=pause / IDLE=resume "
+                "at your configured capacity. Live intensity % is not available. "
+                "Resume may reconnect the pool and rebuild DAG — not a duty-cycle."
+            )
+        else:
+            self.lbl_idle_note.setText(
+                "BTC/BCH: percentages finely scale your Intensity (1–10) ceiling via batch/sleep. "
+                "XMR: 0% = HTTP pause (pool stays); any %>0 resumes at your CPU thread limit "
+                "(intermediate % is not faked). "
+                "RVN/ERG (Rigel): ACTIVE pauses / IDLE resumes at configured capacity "
+                "(pool may reconnect; DAG may rebuild)."
+            )
+        self._sync_idle_enabled()
 
     def _on_change(self, *_args: Any) -> None:
         self._refresh_thermal_hint()

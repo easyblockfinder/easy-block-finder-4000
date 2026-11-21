@@ -2478,6 +2478,7 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self._cfg, self)
         dlg.form.pick_gpu_clicked.connect(self._on_pick_gpu)
+        dlg.form.set_rigel_binary_idle(self._profile.engine_kind == "managed_external" and self._network_id != "xmr")
         if dlg.exec():
             vals = dlg.values()
             overlay = bool(vals.pop("scoreboard_overlay_enabled", True))

@@ -1548,6 +1548,7 @@ class MiningController:
                     ),
                 )
                 self._rigel.start()
+                self._rigel_idle_paused = False
                 self.stats.payout_address = addr
                 self._log_event(
                     f"Rigel {network_id.upper()} start bus={gpu.bus_id} "
@@ -1625,6 +1626,7 @@ class MiningController:
                     )
 
                 if self._paused:
+                    self.stats.paused_idle = False
                     want = self._desired_donation_active()
                     if want != self._donation_active:
                         self._donation_active = want
@@ -1635,6 +1637,51 @@ class MiningController:
                             else self.address
                         )
                         self.stats.donation_active = want
+                    self._emit()
+                    self._stop.wait(1.0)
+                    continue
+
+                # Rigel: binary auto-idle only (no live %). ACTIVE/0% → halt once;
+                # IDLE/>0% → start once. No duty-cycle. Pool reconnect + possible DAG rebuild.
+                idle_state = self._eval_idle_policy()
+                want_idle_pause = idle_state.scale <= 0.0 or idle_state.mode == "active"
+                # When feature off, scale=1 and mode=off → do not pause.
+                if idle_state.mode == "off":
+                    want_idle_pause = False
+                elif idle_state.mode == "idle":
+                    want_idle_pause = idle_state.scale <= 0.0
+                else:
+                    # active mode: pause hashing (binary) — fine % not supported on Rigel
+                    want_idle_pause = True
+
+                if want_idle_pause and not self._rigel_idle_paused:
+                    self._log_event(
+                        "Rigel auto-idle ACTIVE — pausing miner "
+                        "(pool will reconnect on resume; DAG may rebuild)."
+                    )
+                    if not _halt_rigel():
+                        break
+                    self._rigel_idle_paused = True
+                    self.stats.paused_idle = True
+                    self.stats.coinbase_status = (
+                        "ACTIVE MODE (Rigel): mining paused. Resume on IDLE may "
+                        "reconnect the pool and rebuild DAG."
+                    )
+                    self.stats.status = self.stats.coinbase_status
+                elif (not want_idle_pause) and self._rigel_idle_paused:
+                    self._log_event(
+                        "Rigel auto-idle IDLE — resuming at configured capacity "
+                        "(pool reconnect / DAG rebuild possible)."
+                    )
+                    _start_rigel(self._mining_address or self.address)
+                    if self._motor_start_blocked():
+                        break
+                    if self._rigel is not None:
+                        self._rigel_idle_paused = False
+                        self.stats.paused_idle = False
+                        self.stats.coinbase_status = ""
+                self.stats.paused_idle = bool(self._rigel_idle_paused)
+                if self._rigel_idle_paused:
                     self._emit()
                     self._stop.wait(1.0)
                     continue
