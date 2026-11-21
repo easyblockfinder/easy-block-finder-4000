@@ -1975,6 +1975,16 @@ class MainWindow(QMainWindow):
             if stats.test_mode and stats.connected
             else ("Connected" if stats.connected else "Not connected")
         )
+        mode = getattr(stats, "activity_mode", "off") or "off"
+        scale = float(getattr(stats, "activity_scale", 1.0) or 1.0)
+        if mode == "off":
+            self.lbl_activity.setText("Off")
+        elif mode == "active":
+            self.lbl_activity.setText(f"ACTIVE MODE · {scale * 100:.0f}% capacity")
+        elif mode == "idle":
+            self.lbl_activity.setText(f"IDLE MODE · {scale * 100:.0f}% capacity")
+        else:
+            self.lbl_activity.setText(str(mode))
         self.lbl_device.setText(stats.device_name or "—")
         rate = stats.hashrate
         if rate >= 1_000_000:
