@@ -605,6 +605,7 @@ class MainWindow(QMainWindow):
         grid.setColumnStretch(3, 1)
 
         self.lbl_conn_k, self.lbl_conn = _stat_pair("Connection")
+        self.lbl_activity_k, self.lbl_activity = _stat_pair("Auto-idle mode")
         self.lbl_device_k, self.lbl_device = _stat_pair("Device")
         self.lbl_rate_k, self.lbl_rate = _stat_pair("Hash rate")
         self.lbl_total_k, self.lbl_total = _stat_pair("Session attempts", mono=True)
@@ -621,6 +622,7 @@ class MainWindow(QMainWindow):
 
         pairs = [
             (self.lbl_conn_k, self.lbl_conn),
+            (self.lbl_activity_k, self.lbl_activity),
             (self.lbl_device_k, self.lbl_device),
             (self.lbl_rate_k, self.lbl_rate),
             (self.lbl_total_k, self.lbl_total),
@@ -1614,6 +1616,20 @@ class MainWindow(QMainWindow):
             self._intensity_val(),
             self._pause_temp_val(),
             self._resume_temp_val(),
+        )
+        self.controller.update_idle_options(
+            enabled=bool(self._cfg.get("auto_idle_mining", False)),
+            timeout_s=int(self._cfg.get("idle_timeout_s") or 150),
+            active_pct=int(
+                self._cfg.get("idle_active_pct")
+                if self._cfg.get("idle_active_pct") is not None
+                else 10
+            ),
+            idle_pct=int(
+                self._cfg.get("idle_idle_pct")
+                if self._cfg.get("idle_idle_pct") is not None
+                else 100
+            ),
         )
 
     def _allow_mine_without_temp(self) -> bool:

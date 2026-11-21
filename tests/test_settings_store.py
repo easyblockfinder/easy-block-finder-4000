@@ -37,6 +37,10 @@ def test_existing_user_keeps_intensity_and_skips_wizard():
     assert data["setup_wizard_done"] is True
     assert data["scoreboard_overlay_enabled"] is True
     assert data["pool_by_network"] == {}
+    assert data["auto_idle_mining"] is False
+    assert data["idle_timeout_s"] == 150
+    assert data["idle_active_pct"] == 10
+    assert data["idle_idle_pct"] == 100
 
 
 def test_fresh_install_gets_wizard_and_new_defaults():

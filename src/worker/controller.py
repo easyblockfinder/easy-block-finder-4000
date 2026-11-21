@@ -38,10 +38,12 @@ from mining.best_hash_store import (
     upsert_record_if_better,
 )
 from mining.lifetime_stats import add_lifetime_attempts, get_lifetime_attempts
+from monitor.user_activity import idle_seconds
 from networks.pool_input import safe_pool_log_fields
 from networks.pool_resolve import resolve_pool
 from networks.pool_types import ResolvedPoolEndpoint
 from networks.pool_validation import get_validation_profile
+from worker.idle_policy import IdleMiningPolicy, IdlePolicyState
 from mining.block_store import (
     STATUS_CANDIDATE,
     STATUS_ORPHAN,
@@ -132,6 +134,9 @@ class MiningStats:
     pool_kind: str = "solo"
     pool_mode: str = "default"
     pool_banner: str = ""
+    activity_mode: str = "off"  # off | active | idle (auto-idle feature)
+    activity_scale: float = 1.0  # 0..1 of configured capacity
+    paused_idle: bool = False
 
 
 class MiningController:
@@ -198,11 +203,49 @@ class MiningController:
         self._stopping: bool = False
         self._share_accum: Optional[ManagedShareAccum] = None
         self._motor_gen: int = 0
+        self._idle_policy = IdleMiningPolicy()
+        self._idle_force_active = False
+        self._idle_scale = 1.0
 
     def update_settings(self, intensity: int, pause_temp: int, resume_temp: int) -> None:
         self.intensity = max(1, min(10, int(intensity)))
         self.pause_temp = int(pause_temp)
         self.resume_temp = int(resume_temp)
+
+    def update_idle_options(
+        self,
+        *,
+        enabled: bool = False,
+        timeout_s: int = 150,
+        active_pct: int = 10,
+        idle_pct: int = 100,
+    ) -> None:
+        self._idle_policy.configure(
+            enabled=enabled,
+            timeout_s=timeout_s,
+            active_pct=active_pct,
+            idle_pct=idle_pct,
+        )
+        if not enabled:
+            self.stats.activity_mode = "off"
+            self.stats.activity_scale = 1.0
+            self.stats.paused_idle = False
+
+    def force_idle_active(self) -> None:
+        """Sleep/session resume: treat as ACTIVE and reset idle timeout clock."""
+        self._idle_force_active = True
+        self._idle_policy.reset_to_active()
+
+    def _eval_idle_policy(self) -> IdlePolicyState:
+        force = bool(self._idle_force_active)
+        if force:
+            self._idle_force_active = False
+        idle_s = idle_seconds() if self._idle_policy.enabled else None
+        state = self._idle_policy.evaluate(idle_s=idle_s, force_active=force)
+        self.stats.activity_mode = state.mode
+        self.stats.activity_scale = float(state.scale)
+        # paused_idle applied by engine adapters when scale==0 and not thermal/stopped
+        return state
 
     def update_cpu_options(
         self,

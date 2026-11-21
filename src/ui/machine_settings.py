@@ -89,6 +89,59 @@ class MachineSettingsForm(QWidget):
         self.pause_battery = QCheckBox("Stop XMR mining on battery power")
         lay.addWidget(self.pause_battery)
 
+        idle_title = QLabel("Automatic Idle Mining")
+        idle_title.setObjectName("sectionTitle")
+        lay.addWidget(idle_title)
+
+        self.auto_idle = QCheckBox("Reduce mining while I use the PC; raise when idle")
+        self.auto_idle.setToolTip(
+            "Uses Windows last-input time only (no keylogging). "
+            "Default off — existing mining behavior unchanged until you enable it. "
+            "Manual Stop and temperature protection always win."
+        )
+        lay.addWidget(self.auto_idle)
+
+        idle_form = QFormLayout()
+        idle_form.setSpacing(8)
+        self.idle_timeout = QSpinBox()
+        self.idle_timeout.setRange(5, 3600)
+        self.idle_timeout.setSuffix(" s")
+        self.idle_timeout.setMinimumHeight(34)
+        self.idle_timeout.setToolTip(
+            "Seconds without keyboard/mouse before IDLE MODE (default 150)."
+        )
+        idle_form.addRow("Idle timeout", self.idle_timeout)
+
+        self.idle_active_pct = QSpinBox()
+        self.idle_active_pct.setRange(0, 100)
+        self.idle_active_pct.setSuffix(" %")
+        self.idle_active_pct.setMinimumHeight(34)
+        self.idle_active_pct.setToolTip(
+            "Work scale while you are active, as % of your configured intensity/threads "
+            "(not hardware max). 0 = pause hashing."
+        )
+        idle_form.addRow("Active intensity", self.idle_active_pct)
+
+        self.idle_idle_pct = QSpinBox()
+        self.idle_idle_pct.setRange(0, 100)
+        self.idle_idle_pct.setSuffix(" %")
+        self.idle_idle_pct.setMinimumHeight(34)
+        self.idle_idle_pct.setToolTip(
+            "Work scale after idle timeout, as % of your configured capacity. "
+            "100% = full configured intensity/threads."
+        )
+        idle_form.addRow("Idle intensity", self.idle_idle_pct)
+        lay.addLayout(idle_form)
+
+        self.lbl_idle_note = QLabel(
+            "Percentages scale your current Intensity (BTC/BCH) and CPU thread limit (XMR). "
+            "RVN/ERG (Rigel): ACTIVE pauses mining, IDLE resumes at full configured capacity "
+            "(pool may reconnect; DAG may rebuild). Unsupported live % is not offered there."
+        )
+        self.lbl_idle_note.setObjectName("tagline")
+        self.lbl_idle_note.setWordWrap(True)
+        lay.addWidget(self.lbl_idle_note)
+
         self.lbl_gpu = QLabel("GPU bus/UUID: (auto on single GPU)")
         self.lbl_gpu.setObjectName("statKey")
         self.lbl_gpu.setWordWrap(True)
@@ -104,6 +157,10 @@ class MachineSettingsForm(QWidget):
             self.resume_temp,
             self.cpu_threads,
             self.pause_battery,
+            self.auto_idle,
+            self.idle_timeout,
+            self.idle_active_pct,
+            self.idle_idle_pct,
         ):
             if isinstance(w, QSpinBox):
                 w.valueChanged.connect(self._on_change)
@@ -111,6 +168,13 @@ class MachineSettingsForm(QWidget):
                 w.toggled.connect(self._on_change)
 
         self._refresh_thermal_hint()
+        self._sync_idle_enabled()
+        self.auto_idle.toggled.connect(self._sync_idle_enabled)
+
+    def _sync_idle_enabled(self, *_args: Any) -> None:
+        on = self.auto_idle.isChecked()
+        for w in (self.idle_timeout, self.idle_active_pct, self.idle_idle_pct):
+            w.setEnabled(on)
 
     def _on_change(self, *_args: Any) -> None:
         self._refresh_thermal_hint()
@@ -137,6 +201,10 @@ class MachineSettingsForm(QWidget):
         self.resume_temp.setValue(int(cfg.get("resume_temp") or 55))
         self.cpu_threads.setValue(int(cfg.get("cpu_thread_limit") or 0))
         self.pause_battery.setChecked(bool(cfg.get("pause_on_battery", True)))
+        self.auto_idle.setChecked(bool(cfg.get("auto_idle_mining", False)))
+        self.idle_timeout.setValue(int(cfg.get("idle_timeout_s") or 150))
+        self.idle_active_pct.setValue(int(cfg.get("idle_active_pct") if cfg.get("idle_active_pct") is not None else 10))
+        self.idle_idle_pct.setValue(int(cfg.get("idle_idle_pct") if cfg.get("idle_idle_pct") is not None else 100))
         bus = cfg.get("gpu_bus_id")
         uuid = cfg.get("gpu_uuid")
         if bus or uuid:
@@ -144,6 +212,7 @@ class MachineSettingsForm(QWidget):
         else:
             self.lbl_gpu.setText("GPU bus/UUID: (auto on single GPU)")
         self._refresh_thermal_hint()
+        self._sync_idle_enabled()
 
     def values(self) -> dict[str, Any]:
         return {
@@ -152,6 +221,10 @@ class MachineSettingsForm(QWidget):
             "resume_temp": self.resume_temp.value(),
             "cpu_thread_limit": self.cpu_threads.value(),
             "pause_on_battery": self.pause_battery.isChecked(),
+            "auto_idle_mining": self.auto_idle.isChecked(),
+            "idle_timeout_s": self.idle_timeout.value(),
+            "idle_active_pct": self.idle_active_pct.value(),
+            "idle_idle_pct": self.idle_idle_pct.value(),
         }
 
     def set_hardware_summary(self, text: str) -> None:

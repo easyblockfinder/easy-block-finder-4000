@@ -12,6 +12,7 @@ from app_meta import APP_DATA_DIRNAME, LEGACY_APP_DATA_DIRNAMES
 from mining.app_donation import default_app_donation, normalize_app_donation
 from networks.pool_resolve import normalize_pool_by_network
 from networks.profiles import NETWORK_ORDER, normalize_network_id
+from worker.idle_policy import normalize_idle_settings
 
 
 def _local_app_data() -> Path:
@@ -64,6 +65,11 @@ DEFAULTS: dict[str, Any] = {
     "setup_wizard_done": False,
     # Per-network pool selection (empty = all defaults; preserves existing installs)
     "pool_by_network": {},
+    # Automatic Idle Mining (default OFF — existing installs unchanged)
+    "auto_idle_mining": False,
+    "idle_timeout_s": 150,
+    "idle_active_pct": 10,
+    "idle_idle_pct": 100,
 }
 
 
@@ -72,6 +78,7 @@ def _normalize_loaded(data: dict[str, Any]) -> dict[str, Any]:
     out["address_by_network"] = dict(DEFAULTS["address_by_network"])
     out["app_donation"] = default_app_donation()
     out["pool_by_network"] = {}
+    idle_keys = ("auto_idle_mining", "idle_timeout_s", "idle_active_pct", "idle_idle_pct")
     for k, v in data.items():
         if k == "address_by_network" and isinstance(v, dict):
             for nid in NETWORK_ORDER:
@@ -92,8 +99,11 @@ def _normalize_loaded(data: dict[str, Any]) -> dict[str, Any]:
             "app_donation",
             "capacity_blocks",
             "pool_by_network",
+            *idle_keys,
         ):
             out[k] = v
+    idle = normalize_idle_settings({k: data.get(k, DEFAULTS[k]) for k in idle_keys})
+    out.update(idle)
     out["selected_network"] = normalize_network_id(str(out.get("selected_network") or "btc"))
     # Migrate legacy single 'address' field into btc
     legacy_addr = str(out.get("address") or "").strip()
