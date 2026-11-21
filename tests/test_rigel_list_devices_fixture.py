@@ -41,7 +41,7 @@ def test_domain_distinguishes_same_bus_dev():
 
 
 def test_ambiguous_domain_raises():
-    with pytest.raises(RuntimeError, match="belirsiz|eksik domain"):
+    with pytest.raises(RuntimeError, match=r"ambiguous/missing domain"):
         resolve_rigel_device_index(
             selected_bus="03:00.0",
             rigel_devices=parse_rigel_list_devices(FIX),

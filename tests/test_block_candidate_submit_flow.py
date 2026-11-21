@@ -174,7 +174,8 @@ def test_outcome_unknown_does_not_increment_rejected(isolated_controller):
             "outcome_unknown": True,
         },
     )
-    assert e["status"] == "sonuc_bilinmiyor"
+    # Status token is language-stable; must not count as reject/accept.
+    assert e["status"] == "outcome_unknown"
     assert ctrl.stats.rejected == 0
     assert ctrl.stats.accepted == 0
     assert e.get("pool_ok") is None

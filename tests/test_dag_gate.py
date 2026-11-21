@@ -32,7 +32,9 @@ def test_vram_gate_rejects_low_free():
         overhead_bytes=overhead,
     )
     assert r.ok is False
-    assert "Yetersiz" in r.message
+    # Message language may change; gate must cite insufficient free VRAM.
+    assert "Insufficient free VRAM" in r.message
+    assert "free=" in r.message
 
 
 def test_vram_gate_accepts_enough_free():

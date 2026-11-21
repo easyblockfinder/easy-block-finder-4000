@@ -67,7 +67,8 @@ def test_submit_share_session_and_socket_under_connection_lock():
         )
         assert False, "session uyusmazligi was expected"
     except RuntimeError as exc:
-        assert "oturum" in str(exc).lower()
+        # Stable English token from StratumClient; must refuse send.
+        assert "session mismatch" in str(exc).lower()
     assert len(sent) == 1  # ek submit none
 
 

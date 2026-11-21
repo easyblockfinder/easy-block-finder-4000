@@ -39,7 +39,7 @@ def test_rigel_fee_vs_user_pool():
         }
     )
     assert r.snapshot.accepted == 2
-    assert r.snapshot.unattrithisted_shares == 1  # transition interval
+    assert r.snapshot.unattributed_shares == 1  # transition interval
     assert r.snapshot.engine_fee_shares == 0
     r._ingest(
         {
