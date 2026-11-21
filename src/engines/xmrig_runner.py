@@ -81,6 +81,7 @@ class XmrigRunner:
         on_snapshot: Optional[Callable[[XmrigSnapshot], None]] = None,
         user_pool_hint: str = "kryptex",
         generation: int = 0,
+        use_tls: bool = False,
     ) -> None:
         self.exe = Path(exe)
         self.host = host
@@ -94,6 +95,7 @@ class XmrigRunner:
         self.on_snapshot = on_snapshot
         self.user_pool_hint = user_pool_hint.lower()
         self.generation = int(generation)
+        self.use_tls = bool(use_tls)
         self._retired = False
 
         self._proc: Optional[subprocess.Popen] = None
@@ -147,6 +149,8 @@ class XmrigRunner:
             "--http-no-restricted",
             "--no-color",
         ]
+        if self.use_tls:
+            cmd.append("--tls")
         if self.threads > 0:
             cmd.append(f"--threads={self.threads}")
 

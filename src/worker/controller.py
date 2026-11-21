@@ -1098,6 +1098,10 @@ class MiningController:
                         on_snapshot=_on_snap,
                         user_pool_hint="kryptex",
                         generation=motor_gen,
+                        use_tls=bool(
+                            self._pool_endpoint
+                            and self._pool_endpoint.transport == "tls"
+                        ),
                     )
                     self._xmrig.start()
                 except Exception as exc:
@@ -1460,6 +1464,10 @@ class MiningController:
                     user_pool_hint="2miners",
                     env_extra={"CUDA_DEVICE_ORDER": "PCI_BUS_ID"},
                     generation=motor_gen,
+                    use_tls=bool(
+                        self._pool_endpoint
+                        and self._pool_endpoint.transport == "tls"
+                    ),
                 )
                 self._rigel.start()
                 self.stats.payout_address = addr

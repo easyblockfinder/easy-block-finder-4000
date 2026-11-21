@@ -69,6 +69,18 @@ def test_public_pool_username_without_worker():
     assert ep_w.render_username("bc1qabc") == "bc1qabc.rig1"
 
 
-def test_external_coins_have_empty_presets_for_now():
-    assert list_presets("xmr") == []
-    assert get_preset("rvn", "anything") is None
+def test_external_coins_have_verified_presets():
+    xmr = list_presets("xmr")
+    assert 2 <= len(xmr) <= 3
+    assert all(p.port == 7029 for p in xmr)
+    assert all(p.username_format == "solo:{wallet}" for p in xmr)
+    rvn = list_presets("rvn")
+    assert 2 <= len(rvn) <= 3
+    assert {p.host for p in rvn} >= {
+        "us-solo-rvn.2miners.com",
+        "asia-solo-rvn.2miners.com",
+    }
+    erg = list_presets("erg")
+    assert 2 <= len(erg) <= 3
+    assert all(p.port == 9999 for p in erg)
+    assert get_preset("rvn", "2miners_rvn_us") is not None

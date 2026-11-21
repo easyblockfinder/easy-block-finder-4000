@@ -51,6 +51,7 @@ class RigelRunner:
         env_extra: Optional[dict[str, str]] = None,
         log_lines: int = 40,
         generation: int = 0,
+        use_tls: bool = False,
     ) -> None:
         self.exe = Path(exe)
         self.algorithm = algorithm
@@ -66,6 +67,7 @@ class RigelRunner:
         self.env_extra = dict(env_extra or {})
         self.log_lines = max(0, int(log_lines))
         self.generation = int(generation)
+        self.use_tls = bool(use_tls)
         self._retired = False
 
         self._proc: Optional[subprocess.Popen] = None
@@ -87,7 +89,8 @@ class RigelRunner:
     def start(self) -> None:
         if self._proc and self._proc.poll() is None:
             raise RuntimeError("Rigel is already running.")
-        pool = f"stratum+tcp://{self.host}:{self.port}"
+        scheme = "stratum+ssl" if self.use_tls else "stratum+tcp"
+        pool = f"{scheme}://{self.host}:{self.port}"
         cmd = [
             str(self.exe),
             "-a",

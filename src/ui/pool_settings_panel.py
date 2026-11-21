@@ -180,15 +180,15 @@ class PoolSettingsPanel(QWidget):
         self._loading = True
         try:
             prof = get_profile(network_id)
-            # Phase 2: preset/custom UI for native sha256d only (BTC/BCH).
-            native = prof.engine_kind == "native_sha256d"
-            self.mode.setEnabled(native)
-            self.btn_apply.setEnabled(native)
-            self.btn_reset.setEnabled(native)
-            self.btn_test.setEnabled(native)
+            # Preset/custom for all mining-ready engines (native + managed external).
+            ready = bool(prof.mining_ready)
+            self.mode.setEnabled(ready)
+            self.btn_apply.setEnabled(ready)
+            self.btn_reset.setEnabled(ready)
+            self.btn_test.setEnabled(ready)
             self._reload_presets()
             sel = self._pool_by_network.get(network_id) or {}
-            mode = str(sel.get("mode") or "default") if native else "default"
+            mode = str(sel.get("mode") or "default") if ready else "default"
             idx = self.mode.findData(mode)
             self.mode.setCurrentIndex(idx if idx >= 0 else 0)
             if mode == "preset":
@@ -217,12 +217,6 @@ class PoolSettingsPanel(QWidget):
                 self.password.setText(prof.password or "x")
             self._on_mode_changed()
             self._refresh_preview()
-            if not native:
-                self.lbl_banner.setText(
-                    "Preset/custom pool for this coin will be enabled in a later update. "
-                    "Built-in default pool is used."
-                )
-                self.lbl_banner.setVisible(True)
         finally:
             self._loading = False
 
@@ -382,23 +376,17 @@ class PoolSettingsPanel(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "Invalid pool", str(exc))
             return
-        from networks.pool_connection_test import probe_native_pool_connection
         from networks.profiles import get_profile
 
         prof = get_profile(self._network_id)
         username = ep.render_username(prof.pool_identity(wallet))
         self._testing = True
         self.btn_test.setEnabled(False)
-        self.lbl_test.setText(f"Testing {ep.host}:{ep.port} (waiting for mining.notify)…")
+        self.lbl_test.setText(
+            f"Testing {ep.host}:{ep.port} (job required; temporary processes will stop)…"
+        )
         try:
-            result = probe_native_pool_connection(
-                host=ep.host,
-                port=ep.port,
-                username=username,
-                password=ep.password,
-                transport=ep.transport,
-                timeout_s=20.0,
-            )
+            result = self._run_pool_probe(prof, ep, username)
         finally:
             self._testing = False
             self.btn_test.setEnabled(True)
@@ -407,3 +395,76 @@ class PoolSettingsPanel(QWidget):
             QMessageBox.information(self, "Pool connection OK", result.message)
         else:
             QMessageBox.warning(self, "Pool connection failed", result.message)
+
+    def _run_pool_probe(self, prof, ep, username: str):
+        from networks.pool_connection_test import (
+            PoolConnectionTestResult,
+            probe_native_pool_connection,
+        )
+
+        if prof.engine_kind == "native_sha256d":
+            return probe_native_pool_connection(
+                host=ep.host,
+                port=ep.port,
+                username=username,
+                password=ep.password,
+                transport=ep.transport,
+                timeout_s=20.0,
+            )
+        if prof.engine_kind != "managed_external":
+            return PoolConnectionTestResult(
+                ok=False,
+                stage="failed",
+                message=f"Unsupported engine for pool test: {prof.engine_kind}",
+            )
+        try:
+            from engines.fetch_miner import ensure_miner
+        except Exception as exc:
+            return PoolConnectionTestResult(
+                ok=False, stage="failed", message=f"Miner toolkit unavailable: {exc}"
+            )
+        if self._network_id == "xmr":
+            try:
+                exe = ensure_miner("xmrig", reverify=False)
+            except Exception as exc:
+                return PoolConnectionTestResult(
+                    ok=False, stage="failed", message=f"XMRig not available: {exc}"
+                )
+            from engines.external_pool_probe import probe_xmrig_pool
+
+            return probe_xmrig_pool(
+                exe=exe,
+                host=ep.host,
+                port=ep.port,
+                username=username,
+                password=ep.password,
+                transport=ep.transport,
+                timeout_s=35.0,
+            )
+        if self._network_id in ("rvn", "erg"):
+            try:
+                exe = ensure_miner("rigel", reverify=False)
+            except Exception as exc:
+                return PoolConnectionTestResult(
+                    ok=False, stage="failed", message=f"Rigel not available: {exc}"
+                )
+            from engines.external_pool_probe import probe_rigel_pool
+
+            algo = "kawpow" if self._network_id == "rvn" else "autolykos2"
+            coin = self._network_id
+            return probe_rigel_pool(
+                exe=exe,
+                algorithm=algo,
+                coin=coin,
+                host=ep.host,
+                port=ep.port,
+                username=username,
+                password=ep.password,
+                transport=ep.transport,
+                timeout_s=45.0,
+            )
+        return PoolConnectionTestResult(
+            ok=False,
+            stage="failed",
+            message=f"No external pool probe wired for {self._network_id}.",
+        )
