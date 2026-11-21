@@ -388,11 +388,6 @@ class MiningController:
             self.test_mode = test_mode
             self.allow_mine_without_temp = bool(allow_mine_without_temp)
             ep = pool_endpoint or resolve_pool(profile.id, pool_by_network)
-            if ep.transport == "tls":
-                raise ValueError(
-                    "TLS pool connections are not enabled yet. "
-                    "Use a TCP pool or wait for the TLS update."
-                )
             self._pool_endpoint = ep
             # Ba etkinse adres do rula
             if is_effectively_enabled(self.app_donation, profile.id):
@@ -1637,6 +1632,7 @@ class MiningController:
                 return
             user = self._authorize_user(address)
             host, port, password = self._pool_conn()
+            use_tls = bool(self._pool_endpoint and self._pool_endpoint.transport == "tls")
             self._stratum = StratumClient(
                 host=host,
                 port=port,
@@ -1646,11 +1642,16 @@ class MiningController:
                 on_submit_result=self._on_submit_result,
                 suggest_difficulty=1.0,
                 password=password,
+                use_tls=use_tls,
             )
             self._stratum.start(user)
             self.stats.payout_address = address
             log_fields = safe_pool_log_fields(
-                host=host, port=port, transport="tcp", username=user, password=password
+                host=host,
+                port=port,
+                transport="tls" if use_tls else "tcp",
+                username=user,
+                password=password,
             )
             self._log_event(
                 f"Network={self._profile.id} stratum={log_fields['host']}:"

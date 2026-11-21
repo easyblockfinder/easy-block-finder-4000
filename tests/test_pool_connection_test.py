@@ -200,18 +200,6 @@ def test_auth_without_job_is_failure():
         srv.stop()
 
 
-def test_tls_refused():
-    result = probe_native_pool_connection(
-        host="pool.example.com",
-        port=3333,
-        username="bc1qtest",
-        transport="tls",
-        timeout_s=1.0,
-    )
-    assert result.ok is False
-    assert "TLS" in result.message
-
-
 def test_empty_user_fails():
     result = probe_native_pool_connection(
         host="127.0.0.1",

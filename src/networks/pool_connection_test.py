@@ -58,18 +58,6 @@ def probe_native_pool_connection(
             port=clean_port,
         )
 
-    if transport == "tls":
-        return PoolConnectionTestResult(
-            ok=False,
-            stage="failed",
-            message=(
-                "TLS is not enabled yet (certificate verification required). "
-                "Use a TCP pool for now."
-            ),
-            host=clean_host,
-            port=clean_port,
-        )
-
     got_job = threading.Event()
     job_id = ""
     stages = {"connected": False, "authorized": False}
@@ -87,7 +75,7 @@ def probe_native_pool_connection(
     def on_status(text: str) -> None:
         status_notes.append(text)
         low = (text or "").lower()
-        if "tcp connected" in low:
+        if "tcp connected" in low or "tls connected" in low:
             stages["connected"] = True
         if "authorized" in low:
             stages["authorized"] = True
@@ -99,6 +87,7 @@ def probe_native_pool_connection(
         on_status=on_status,
         suggest_difficulty=1.0,
         password=clean_pass,
+        use_tls=(transport == "tls"),
     )
     client_holder["c"] = client
     deadline = time.monotonic() + max(5.0, float(timeout_s))

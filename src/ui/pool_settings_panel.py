@@ -109,8 +109,7 @@ class PoolSettingsPanel(QWidget):
 
         self.transport = QComboBox()
         self.transport.addItem("TCP (cleartext)", "tcp")
-        # TLS listed but blocked until Phase 4 — keep visible so users know.
-        self.transport.addItem("TLS (coming soon — cert verify required)", "tls")
+        self.transport.addItem("TLS (certificate verified)", "tls")
         self.transport.currentIndexChanged.connect(self._refresh_preview)
         form.addRow("Transport", self.transport)
 
@@ -330,16 +329,6 @@ class PoolSettingsPanel(QWidget):
         if not self._ensure_stopped():
             return
         mode = str(self.mode.currentData() or "default")
-        if mode == "tls" or (
-            mode == "custom" and str(self.transport.currentData() or "") == "tls"
-        ):
-            QMessageBox.warning(
-                self,
-                "TLS not enabled yet",
-                "TLS pool connections require certificate verification and are not "
-                "enabled in this build. Use TCP for now.",
-            )
-            return
         if mode == "preset" and not str(self.preset.currentData() or "").strip():
             QMessageBox.warning(self, "No preset", "No verified preset is available for this coin.")
             return
@@ -392,13 +381,6 @@ class PoolSettingsPanel(QWidget):
             ep = resolve_pool(self._network_id, draft)
         except Exception as exc:
             QMessageBox.warning(self, "Invalid pool", str(exc))
-            return
-        if ep.transport == "tls":
-            QMessageBox.warning(
-                self,
-                "TLS not enabled",
-                "TLS pool tests require certificate verification (later update). Use TCP.",
-            )
             return
         from networks.pool_connection_test import probe_native_pool_connection
         from networks.profiles import get_profile

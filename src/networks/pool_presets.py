@@ -10,7 +10,9 @@ Verification notes (2026-11-21):
   username = BCH address, password x. Same account-wallet payout model as EU default.
 
 Defaults remain NetworkProfile endpoints (not duplicated here as presets).
-TLS ports are omitted until Phase 4 cert-verify support lands.
+TLS custom endpoints are supported via StratumClient cert verification.
+TLS presets can be added after the same host:port docs are verified; custom TLS
+to public-pool.io:4333 (official) is available in the pool picker.
 """
 
 from __future__ import annotations

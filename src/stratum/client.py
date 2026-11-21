@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import ssl
 import threading
 import time
 from typing import Any, Callable, Optional
@@ -34,6 +35,7 @@ class StratumClient:
         on_submit_result: Optional[Callable[[bool, str, Any], None]] = None,
         suggest_difficulty: Optional[float] = 1.0,
         password: str = "x",
+        use_tls: bool = False,
     ) -> None:
         self.host = host
         self.port = port
@@ -43,6 +45,8 @@ class StratumClient:
         self.on_submit_result = on_submit_result
         self.suggest_difficulty = suggest_difficulty
         self.password = password or "x"
+        # TLS always uses system trust store + hostname check. No insecure bypass.
+        self.use_tls = bool(use_tls)
 
         self._sock: Optional[socket.socket] = None
         self._lock = threading.Lock()
@@ -183,14 +187,35 @@ class StratumClient:
                 self._stop.wait(delay)
                 delay = min(delay * 2, RECONNECT_MAX)
 
+    def _ssl_context(self) -> ssl.SSLContext:
+        """Verified TLS only — never disable hostname or cert checks."""
+        return ssl.create_default_context()
+
     def _connect_and_handshake(self) -> None:
-        sock = socket.create_connection((self.host, self.port), timeout=20)
+        raw = socket.create_connection((self.host, self.port), timeout=20)
         if self._stop.is_set():
             try:
-                sock.close()
+                raw.close()
             except OSError:
                 pass
             raise ConnectionError("Stratum stop — connection cancelled.")
+        if self.use_tls:
+            try:
+                sock = self._ssl_context().wrap_socket(
+                    raw, server_hostname=self.host
+                )
+            except ssl.SSLError as exc:
+                try:
+                    raw.close()
+                except OSError:
+                    pass
+                raise ConnectionError(
+                    f"TLS certificate verification failed for {self.host}: {exc}"
+                ) from exc
+            proto = "TLS"
+        else:
+            sock = raw
+            proto = "TCP"
         sock.settimeout(RECV_TIMEOUT)
         with self._lock:
             self._sock = sock
@@ -199,7 +224,7 @@ class StratumClient:
             sid = self.session_id
         self.connected = True
         self._last_activity = time.time()
-        self._set_status(f"TCP connected: {self.host}:{self.port} (session={sid})")
+        self._set_status(f"{proto} connected: {self.host}:{self.port} (session={sid})")
 
         self._reader = threading.Thread(
             target=self._read_forever, name="stratum-reader", daemon=True
