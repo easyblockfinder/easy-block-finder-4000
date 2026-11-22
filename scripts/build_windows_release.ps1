@@ -152,7 +152,16 @@ $zipPyPath = Join-Path $Dist "_zip_payload.py"
 # UTF8NoBOM — a UTF-8 BOM breaks the leading import when py runs the temp script
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($zipPyPath, $zipPy, $utf8NoBom)
-& py -3 $zipPyPath
+$zipPyExe = $null
+foreach ($candidate in @(
+        (Join-Path $Runtime "python.exe"),
+        (Get-Command py -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source),
+        (Get-Command python -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+    )) {
+    if ($candidate -and (Test-Path -LiteralPath $candidate)) { $zipPyExe = $candidate; break }
+}
+if (-not $zipPyExe) { throw "No Python found to create release ZIP (need runtime\python.exe, py, or python)" }
+& $zipPyExe $zipPyPath
 $zipExit = $LASTEXITCODE
 Remove-Item -LiteralPath $zipPyPath -Force -ErrorAction SilentlyContinue
 if ($zipExit -ne 0 -or -not (Test-Path -LiteralPath $ZipPath)) {
