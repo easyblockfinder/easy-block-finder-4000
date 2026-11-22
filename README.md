@@ -18,7 +18,7 @@ First time on a clean Windows PC:
 
 Optional: a portable **`EBF4000-v*-windows.zip`** (also includes `runtime\`) is published for advanced users / signed in-app updates.
 
-**Free & Open-Source Solo Mining Software** (EBF4000 - v1.0.9)
+**Free & Open-Source Solo Mining Software** (EBF4000 - v1.1.0)
 
 Easy Block Finder 4000 is an independent, open-source **solo mining** app for Windows (BTC, BCH, XMR, RVN, ERG).  
 It is not a simulation. **No earnings or hashrate are guaranteed.**
@@ -31,7 +31,10 @@ It is not a simulation. **No earnings or hashrate are guaranteed.**
 - **BTC / BCH:** native OpenCL SHA-256d (no CUDA Toolkit)
 - **XMR:** managed XMRig (CPU / RandomX)
 - **RVN / ERG:** managed Rigel (NVIDIA CUDA; KawPoW / Autolykos2)
-- Manual **Donate** (QR + copy) — does **not** redirect mining hashrate to the author
+- Manual **Support Development** / Donate (QR + copy) — does **not** redirect mining hashrate to the author
+- Custom / preset mining pools (TLS verified; connection test requires a real job)
+- Idle Mode (Start Idle Mode): scale or pause while using the PC; AFK intensity after timeout
+- Best-hash difficulty records for BTC/BCH (GPU best + accepted best) on the scoreboard
 - Thermal guard (Start blocked if temperature is unreadable, unless you opt in)
 - Single-instance UI + system tray
 - External miners are **not** in the zip; download only after consent, SHA-256 pinned

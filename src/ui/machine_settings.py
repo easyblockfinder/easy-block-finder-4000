@@ -89,17 +89,28 @@ class MachineSettingsForm(QWidget):
         self.pause_battery = QCheckBox("Stop XMR mining on battery power")
         lay.addWidget(self.pause_battery)
 
-        idle_title = QLabel("Automatic Idle Mining")
+        idle_title = QLabel("Idle Mode")
         idle_title.setObjectName("sectionTitle")
+        self.lbl_idle_section = idle_title
         lay.addWidget(idle_title)
 
-        self.auto_idle = QCheckBox("Reduce mining while I use the PC; raise when idle")
+        idle_intro = QLabel(
+            "Start Idle begins at “While using PC” intensity, then switches to "
+            "“While AFK” after the timeout with no input. Normal Start ignores these."
+        )
+        idle_intro.setObjectName("tagline")
+        idle_intro.setWordWrap(True)
+        lay.addWidget(idle_intro)
+
+        # Kept for load/save compatibility; Idle Mode is started from the main button.
+        self.auto_idle = QCheckBox("Idle Mode settings ready")
         self.auto_idle.setToolTip(
+            "Save Settings to mark Idle Mode as configured. "
             "Uses Windows last-input time only (no keylogging). "
-            "Default off — existing mining behavior unchanged until you enable it. "
             "Manual Stop and temperature protection always win."
         )
-        lay.addWidget(self.auto_idle)
+        self.auto_idle.setChecked(True)
+        self.auto_idle.setVisible(False)
 
         idle_form = QFormLayout()
         idle_form.setSpacing(8)
@@ -108,34 +119,34 @@ class MachineSettingsForm(QWidget):
         self.idle_timeout.setSuffix(" s")
         self.idle_timeout.setMinimumHeight(34)
         self.idle_timeout.setToolTip(
-            "Seconds without keyboard/mouse before IDLE MODE (default 150)."
+            "Seconds without keyboard/mouse before switching to the AFK intensity."
         )
-        idle_form.addRow("Idle timeout", self.idle_timeout)
+        idle_form.addRow("AFK timeout", self.idle_timeout)
 
         self.idle_active_pct = QSpinBox()
         self.idle_active_pct.setRange(0, 100)
         self.idle_active_pct.setSuffix(" %")
         self.idle_active_pct.setMinimumHeight(34)
         self.idle_active_pct.setToolTip(
-            "Work scale while you are active, as % of your configured intensity/threads "
-            "(not hardware max). 0 = pause hashing."
+            "While you use the PC (keyboard/mouse recently). "
+            "0% = pause hashing; pool/engine stay up when possible."
         )
-        idle_form.addRow("Active intensity", self.idle_active_pct)
+        idle_form.addRow("While using PC", self.idle_active_pct)
 
         self.idle_idle_pct = QSpinBox()
         self.idle_idle_pct.setRange(0, 100)
         self.idle_idle_pct.setSuffix(" %")
         self.idle_idle_pct.setMinimumHeight(34)
         self.idle_idle_pct.setToolTip(
-            "Work scale after idle timeout, as % of your configured capacity. "
-            "100% = full configured intensity/threads."
+            "While AFK (no input for the AFK timeout). "
+            "100% = full configured intensity/threads. Not a guaranteed hashrate."
         )
-        idle_form.addRow("Idle intensity", self.idle_idle_pct)
+        idle_form.addRow("While AFK", self.idle_idle_pct)
         lay.addLayout(idle_form)
 
         self.lbl_idle_note = QLabel(
-            "BTC/BCH: adaptive duty-cycle under your Intensity ceiling (not a guaranteed "
-            "hashrate %). XMR/Rigel: binary pause/resume only — % controls hide for those coins."
+            "“While using PC” applies when you are at the computer; “While AFK” after "
+            "the timeout. BTC/BCH: duty-cycle. XMR/Rigel: binary pause/resume (% hidden)."
         )
         self.lbl_idle_note.setObjectName("tagline")
         self.lbl_idle_note.setWordWrap(True)
@@ -156,7 +167,6 @@ class MachineSettingsForm(QWidget):
             self.resume_temp,
             self.cpu_threads,
             self.pause_battery,
-            self.auto_idle,
             self.idle_timeout,
             self.idle_active_pct,
             self.idle_idle_pct,
@@ -168,39 +178,39 @@ class MachineSettingsForm(QWidget):
 
         self._refresh_thermal_hint()
         self._sync_idle_enabled()
-        self.auto_idle.toggled.connect(self._sync_idle_enabled)
+        from ui.wheel_guard import harden_wheel_widgets
+
+        harden_wheel_widgets(self)
 
     def _sync_idle_enabled(self, *_args: Any) -> None:
-        on = self.auto_idle.isChecked()
         binary = bool(getattr(self, "_rigel_binary_idle", False))
-        self.idle_timeout.setEnabled(on)
-        show_pct = on and not binary
+        self.idle_timeout.setEnabled(True)
+        show_pct = not binary
         for w in (self.idle_active_pct, self.idle_idle_pct):
             w.setEnabled(show_pct)
-            w.setVisible(not binary)
+            w.setVisible(show_pct)
 
     def set_binary_idle_ui(self, binary: bool, *, engine: str = "") -> None:
-        """Hide unsupported live % for XMR/Rigel; timeout + toggle remain."""
+        """Hide unsupported live % for XMR/Rigel; timeout remains."""
         self._rigel_binary_idle = bool(binary)
         eng = (engine or "").lower()
         if binary and eng == "xmr":
             self.lbl_idle_note.setText(
-                "XMR (XMRig): Automatic Idle is binary — ACTIVE pauses via localhost "
-                "HTTP (token), IDLE resumes at your CPU thread limit. Live % scaling "
-                "is not available. Percentages are not applied as hashrate."
+                "XMR (XMRig): Start Idle starts at While-using-PC (HTTP pause when you "
+                "use the PC); after AFK timeout it resumes at your thread limit "
+                "(no live % scaling)."
             )
         elif binary:
             self.lbl_idle_note.setText(
-                "RVN/ERG (Rigel): Automatic Idle uses binary ACTIVE=pause / IDLE=resume "
-                "at your configured capacity. Live intensity % is not available. "
-                "Resume may reconnect the pool and rebuild DAG — not a duty-cycle."
+                "RVN/ERG (Rigel): Start Idle starts immediately; Using-PC pauses / "
+                "AFK resumes at configured capacity (resume may reconnect pool / "
+                "rebuild DAG)."
             )
         else:
             self.lbl_idle_note.setText(
-                "BTC/BCH: auto-idle uses adaptive duty-cycle from measured batch time "
-                "under your Intensity (1–10) ceiling. Values are work-duty targets, "
-                "not guaranteed hashrate or GPU utilization. "
-                "XMR/Rigel use binary pause/resume (no live %)."
+                "BTC/BCH: “While using PC” then “While AFK” after timeout — "
+                "adaptive duty-cycle under your Intensity ceiling "
+                "(not guaranteed hashrate)."
             )
         self._sync_idle_enabled()
 
@@ -229,14 +239,29 @@ class MachineSettingsForm(QWidget):
 
     def load_from(self, cfg: dict[str, Any]) -> None:
         self.intensity.setValue(int(cfg.get("intensity") or 1))
-        self.pause_temp.setValue(int(cfg.get("pause_temp") or 65))
-        self.resume_temp.setValue(int(cfg.get("resume_temp") or 55))
+        self.pause_temp.setValue(int(cfg.get("pause_temp") or 75))
+        self.resume_temp.setValue(int(cfg.get("resume_temp") or 60))
         self.cpu_threads.setValue(int(cfg.get("cpu_thread_limit") or 0))
         self.pause_battery.setChecked(bool(cfg.get("pause_on_battery", True)))
-        self.auto_idle.setChecked(bool(cfg.get("auto_idle_mining", False)))
+        configured = bool(cfg.get("idle_settings_configured", False)) or bool(
+            cfg.get("auto_idle_mining", False)
+        )
+        self.auto_idle.setChecked(configured)
         self.idle_timeout.setValue(int(cfg.get("idle_timeout_s") or 150))
-        self.idle_active_pct.setValue(int(cfg.get("idle_active_pct") if cfg.get("idle_active_pct") is not None else 10))
-        self.idle_idle_pct.setValue(int(cfg.get("idle_idle_pct") if cfg.get("idle_idle_pct") is not None else 100))
+        self.idle_active_pct.setValue(
+            int(
+                cfg.get("idle_active_pct")
+                if cfg.get("idle_active_pct") is not None
+                else 10
+            )
+        )
+        self.idle_idle_pct.setValue(
+            int(
+                cfg.get("idle_idle_pct")
+                if cfg.get("idle_idle_pct") is not None
+                else 80
+            )
+        )
         bus = cfg.get("gpu_bus_id")
         uuid = cfg.get("gpu_uuid")
         if bus or uuid:
@@ -253,7 +278,8 @@ class MachineSettingsForm(QWidget):
             "resume_temp": self.resume_temp.value(),
             "cpu_thread_limit": self.cpu_threads.value(),
             "pause_on_battery": self.pause_battery.isChecked(),
-            "auto_idle_mining": self.auto_idle.isChecked(),
+            "auto_idle_mining": False,
+            "idle_settings_configured": True,
             "idle_timeout_s": self.idle_timeout.value(),
             "idle_active_pct": self.idle_active_pct.value(),
             "idle_idle_pct": self.idle_idle_pct.value(),
@@ -263,7 +289,7 @@ class MachineSettingsForm(QWidget):
         self.lbl_hw.setText(text or "Hardware: —")
 
     def apply_recommended_thermal(self, *, laptop: bool = True) -> None:
-        # Explicit presets (not fresh-install defaults — those are 65 / 55).
+        # Explicit presets (not fresh-install defaults — those are 75 / 60).
         if laptop:
             self.pause_temp.setValue(75)
             self.resume_temp.setValue(67)
@@ -277,8 +303,8 @@ class MachineSettingsForm(QWidget):
 def default_wizard_cfg(base: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     cfg = dict(base or {})
     cfg.setdefault("intensity", 4)
-    cfg.setdefault("pause_temp", 65)
-    cfg.setdefault("resume_temp", 55)
+    cfg.setdefault("pause_temp", 75)
+    cfg.setdefault("resume_temp", 60)
     cfg.setdefault("cpu_thread_limit", 0)
     cfg.setdefault("pause_on_battery", True)
     cfg.setdefault("scoreboard_overlay_enabled", True)

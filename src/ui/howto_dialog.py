@@ -26,8 +26,8 @@ block is found and accepted by the network / pool. There is no earnings guarante
 Only engines you select are fetched; they are SHA-256 verified. Antivirus is never disabled.</li>
 <li>Every launch opens <b>Choose network</b> (does not auto-start mining or jump to the
 last session). Press <b>Start</b> only when you want hashing to begin.</li>
-<li>Optional: <b>Check hardware / GPU capacity…</b> on that screen. Tray <b>Quit</b>
-stops mining and external miners before exit.</li>
+<li>Optional: <b>Check hardware / GPU capacity…</b> on that screen.
+Use <b>File → Exit</b> (or tray <b>Exit</b>) to stop mining and external miners before exit.</li>
 </ol>
 
 <h3>2. Hardware detection &amp; capacity (optional)</h3>

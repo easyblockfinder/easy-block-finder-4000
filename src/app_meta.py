@@ -6,7 +6,7 @@ from pathlib import Path
 
 APP_NAME = "Easy Block Finder 4000"
 APP_SHORT = "EBF4000"
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.1.0"
 # Version label shown to the user
 APP_VERSION_LABEL = f"{APP_SHORT} - v{APP_VERSION}"
 # window / tray
@@ -15,6 +15,15 @@ APP_TITLE = f"{APP_NAME} ({APP_VERSION_LABEL})"
 APP_USER_AGENT = f"{APP_SHORT}/{APP_VERSION}"
 # Data folder under %LOCALAPPDATA%
 APP_DATA_DIRNAME = "EasyBlockFinder4000"
+# Public project links / About
+APP_LICENSE = "Apache License 2.0"
+APP_DEVELOPER = "Samet Kuzu"
+APP_DEVELOPER_EMAIL = "sametkuzu82@gmail.com"
+GITHUB_OWNER = "easyblockfinder"
+GITHUB_REPO = "easy-block-finder-4000"
+GITHUB_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"
+GITHUB_ISSUES_URL = f"{GITHUB_URL}/issues"
+GITHUB_RELEASES_URL = f"{GITHUB_URL}/releases"
 # Previous installations (settings / block candidate migration)
 LEGACY_APP_DATA_DIRNAMES = ("SoloBlockStrike", "BTCHunter")
 # XMRig HTTP API access token (cmdline orphan scan)

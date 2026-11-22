@@ -169,8 +169,8 @@ class MiningController:
         self._known_jobs: list[MiningJob] = []
 
         self.intensity = 1
-        self.pause_temp = 65
-        self.resume_temp = 55
+        self.pause_temp = 75
+        self.resume_temp = 60
         self.address = ""
         self.test_mode = False
         self.network_id = "btc"
@@ -229,6 +229,7 @@ class MiningController:
         timeout_s: int = 150,
         active_pct: int = 10,
         idle_pct: int = 100,
+        arm_session: bool = False,
     ) -> None:
         self._idle_policy.configure(
             enabled=enabled,
@@ -240,6 +241,8 @@ class MiningController:
             self.stats.activity_mode = "off"
             self.stats.activity_scale = 1.0
             self.stats.paused_idle = False
+        elif arm_session:
+            self._idle_policy.arm_session()
 
     def force_idle_active(self) -> None:
         """Sleep/session resume: treat as ACTIVE and reset idle timeout clock."""
@@ -270,14 +273,14 @@ class MiningController:
     ) -> bool:
         """
         Wait up to total_s in small slices. Returns False if stopped or
-        (when abort_if_active) user became ACTIVE and we should leave long IDLE wait.
+        (when abort_if_active) user returned to Using-PC during an AFK duty wait.
         """
         remaining = max(0.0, float(total_s))
         while remaining > 1e-6:
             if self._stop.is_set():
                 return False
             if abort_if_active and self._idle_policy.enabled:
-                # Re-sample activity so long duty waits do not delay ACTIVE.
+                # Re-sample so long AFK duty waits end ASAP when the user returns.
                 probe = self._idle_policy.evaluate(
                     idle_s=idle_seconds(), force_active=False
                 )
@@ -481,19 +484,10 @@ class MiningController:
                 dok, derr = validate_address_for_network(profile.id, daddr)
                 if not dok:
                     raise ValueError(f"Donation address invalid: {derr}")
-            if ep.stats_url_template:
-                try:
-                    stats_url = ep.stats_url_template.format(
-                        address=profile.pool_identity(self.address)
-                    )
-                except (KeyError, ValueError):
-                    stats_url = profile.stats_url_for(self.address)
-            else:
-                stats_url = (
-                    profile.stats_url_for(self.address)
-                    if ep.mode == "default"
-                    else ""
-                )
+            from networks.pool_resolve import stats_url_for_endpoint
+
+            # Selected pool only — custom/unknown with no template stay blank.
+            stats_url = stats_url_for_endpoint(ep, self.address)
             self._explorer.configure(
                 status_url=profile.explorer_status_url,
                 block_url=profile.explorer_block_url,
@@ -1145,7 +1139,11 @@ class MiningController:
             if not shares.apply_snapshot(snap, gen):
                 return
             self.stats.connected = snap.connected
-            self.stats.hashrate = snap.hashrate
+            # Idle HTTP pause: do not let poller paint a stale non-zero hashrate.
+            if getattr(self, "_xmrig_idle_paused", False):
+                self.stats.hashrate = 0.0
+            else:
+                self.stats.hashrate = snap.hashrate
             job_label = str(getattr(snap, "job_id", "") or "")
             if job_label:
                 self.stats.current_job_id = job_label
@@ -1154,6 +1152,18 @@ class MiningController:
                 try:
                     self.stats.server_difficulty = float(snap_diff)
                 except (TypeError, ValueError):
+                    pass
+            try:
+                h_delta = int(getattr(snap, "hashes_delta", 0) or 0)
+            except (TypeError, ValueError):
+                h_delta = 0
+            if h_delta > 0 and not getattr(self, "_xmrig_idle_paused", False):
+                self.stats.total_hashes += h_delta
+                try:
+                    self.stats.lifetime_attempts = add_lifetime_attempts(
+                        self.network_id, h_delta
+                    )
+                except OSError:
                     pass
             _push_share_stats(snap.status)
             if snap.donating:
@@ -1330,35 +1340,38 @@ class MiningController:
                             if xm.pause_mining():
                                 self._xmrig_idle_paused = True
                                 self.stats.paused_idle = True
-                                self._set_activity_ui("ACTIVE MODE · Mining paused")
-                                self._log_event("XMRig HTTP pause (auto-idle ACTIVE)")
+                                self.stats.hashrate = 0.0
+                                self._set_activity_ui("Using PC · Mining paused")
+                                self._log_event("XMRig HTTP pause (using PC)")
                             else:
                                 self._set_activity_ui(
-                                    "ACTIVE MODE · Pause failed (still mining)"
+                                    "Using PC · Pause failed (still mining)"
                                 )
                                 self._log_event("XMRig HTTP pause failed")
                         else:
                             if xm.resume_mining():
                                 self._xmrig_idle_paused = False
                                 self.stats.paused_idle = False
-                                self._set_activity_ui("IDLE MODE · Mining resumed")
+                                self._set_activity_ui("AFK · Mining resumed")
                                 self._log_event(
                                     "XMRig HTTP resume (configured thread limit)"
                                 )
                             else:
                                 self._set_activity_ui(
-                                    "IDLE MODE · Resume failed (still paused)"
+                                    "AFK · Resume failed (still paused)"
                                 )
                                 self._log_event("XMRig HTTP resume failed")
                     self.stats.paused_idle = bool(
                         getattr(self, "_xmrig_idle_paused", False)
                     )
+                    if self.stats.paused_idle:
+                        self.stats.hashrate = 0.0
                 elif idle_state.mode == "off":
                     self._set_activity_ui("")
                 elif self._xmrig_idle_paused:
-                    self._set_activity_ui("ACTIVE MODE · Mining paused")
+                    self._set_activity_ui("Using PC · Mining paused")
                 else:
-                    self._set_activity_ui("IDLE MODE · Mining resumed")
+                    self._set_activity_ui("AFK · Mining resumed")
 
                 want = self._desired_donation_active()
                 if want != self._donation_active:
@@ -1720,15 +1733,15 @@ class MiningController:
                         break
                     self._rigel_idle_paused = True
                     self.stats.paused_idle = True
-                    self._set_activity_ui("ACTIVE MODE · Mining paused")
+                    self._set_activity_ui("Using PC · Mining paused")
                     self.stats.coinbase_status = (
-                        "ACTIVE MODE (Rigel): mining paused. Resume on IDLE may "
+                        "Using PC (Rigel): mining paused. Resume when AFK may "
                         "reconnect the pool and rebuild DAG."
                     )
                     self.stats.status = self.stats.coinbase_status
                 elif (not want_idle_pause) and self._rigel_idle_paused:
                     self._log_event(
-                        "Rigel auto-idle IDLE — resuming at configured capacity "
+                        "Rigel AFK — resuming at configured capacity "
                         "(pool reconnect / DAG rebuild possible)."
                     )
                     _start_rigel(self._mining_address or self.address)
@@ -1737,7 +1750,7 @@ class MiningController:
                     if self._rigel is not None:
                         self._rigel_idle_paused = False
                         self.stats.paused_idle = False
-                        self._set_activity_ui("IDLE MODE · Mining resumed")
+                        self._set_activity_ui("AFK · Mining resumed")
                         self.stats.coinbase_status = ""
                 self.stats.paused_idle = bool(self._rigel_idle_paused)
                 if idle_state.mode == "off":
@@ -2326,9 +2339,11 @@ class MiningController:
             auto_on = idle_state.mode != "off"
             if auto_on and idle_state.scale <= 0.0:
                 self.stats.paused_idle = True
-                self._set_activity_ui("ACTIVE MODE · Mining paused")
+                self.stats.hashrate = 0.0
+                self._hash_window.clear()
+                self._set_activity_ui("Using PC · Mining paused")
                 self.stats.status = (
-                    "ACTIVE MODE — hashing paused. Pool connection and jobs still update."
+                    "Using PC — hashing paused. Pool connection and jobs still update."
                 )
                 self._emit()
                 self._interruptible_wait(0.25)
@@ -2336,9 +2351,9 @@ class MiningController:
             self.stats.paused_idle = False
             if auto_on:
                 if idle_state.mode == "idle":
-                    self._set_activity_ui("IDLE MODE · Duty-cycle scaled")
+                    self._set_activity_ui("AFK · Duty-cycle scaled")
                 else:
-                    self._set_activity_ui("ACTIVE MODE · Duty-cycle scaled")
+                    self._set_activity_ui("Using PC · Duty-cycle scaled")
             else:
                 self._set_activity_ui("")
 
@@ -2473,9 +2488,16 @@ class MiningController:
             self._track_best_hash(snap, result, verified_list)
             self._emit()
             if sleep_s > 0:
+                # Only abort long AFK duty waits when the user returns (→ Using PC).
+                # Never abort while already in Using-PC mode — that skipped Active %
+                # duty-cycle and made Active/AFK intensities feel reversed.
                 self._interruptible_wait(
                     sleep_s,
-                    abort_if_active=bool(auto_on and idle_state.scale < 1.0),
+                    abort_if_active=bool(
+                        auto_on
+                        and idle_state.mode == "idle"
+                        and idle_state.scale < 1.0
+                    ),
                 )
 
     def _handle_verified(self, work: WorkBatch, verified: dict) -> None:

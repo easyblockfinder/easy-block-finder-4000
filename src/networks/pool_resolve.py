@@ -152,6 +152,27 @@ def resolve_pool(
     )
 
 
+def stats_url_for_endpoint(
+    ep: ResolvedPoolEndpoint,
+    address: str,
+) -> str:
+    """
+    Rewards/stats page for the *selected* pool only.
+    Empty template (custom / unknown) → no URL — never fall back to another pool.
+    """
+    tmpl = str(ep.stats_url_template or "").strip()
+    if not tmpl:
+        return ""
+    prof = get_profile(ep.network_id)
+    addr = prof.pool_identity((address or "").strip())
+    if not addr:
+        return ""
+    try:
+        return tmpl.format(address=addr)
+    except (KeyError, ValueError, IndexError):
+        return ""
+
+
 def reset_pool_selection(
     network_id: str,
     pool_by_network: Optional[dict] = None,

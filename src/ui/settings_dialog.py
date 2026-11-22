@@ -36,6 +36,9 @@ class SettingsDialog(QDialog):
         self.form = MachineSettingsForm()
         self.form.load_from(self._cfg)
         lay.addWidget(self.form)
+        from ui.wheel_guard import harden_wheel_widgets
+
+        harden_wheel_widgets(self)
 
         self.chk_scoreboard = QCheckBox(
             "Show mini scoreboard overlay when minimized to the system tray"

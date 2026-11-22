@@ -39,6 +39,9 @@ class XmrigSnapshot:
     generation: int = 0
     job_id: str = ""
     difficulty: Optional[float] = None
+    # Process-session hashes from results.hashes_total (delta since last poll).
+    hashes_total: int = 0
+    hashes_delta: int = 0
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -114,6 +117,8 @@ class XmrigRunner:
         self._unattributed = 0
         self._job_height: Optional[int] = None
         self._job_diff: Optional[float] = None
+        self._last_hashes_raw: Optional[int] = None
+        self._hashes_session = 0
         self.recent_log: list[str] = []
         self.snapshot = XmrigSnapshot(generation=self.generation)
 
@@ -429,6 +434,12 @@ class XmrigRunner:
         results = summary.get("results") or {}
         good = int(results.get("shares_good") or 0)
         total = int(results.get("shares_total") or 0)
+        try:
+            hashes_raw = int(results.get("hashes_total") or 0)
+        except (TypeError, ValueError):
+            hashes_raw = 0
+        if hashes_raw < 0:
+            hashes_raw = 0
         hash_obj = summary.get("hashrate") or {}
         total_hr = hash_obj.get("total") or [0]
         hr = float(total_hr[0] or 0) if isinstance(total_hr, list) else float(total_hr or 0)
@@ -487,6 +498,16 @@ class XmrigRunner:
             self._last_good = good
             self._last_total = total
             self._last_pool_kind = kind
+            # hashes_total is process-wide (includes donate); first sample is baseline.
+            hashes_delta = 0
+            if self._last_hashes_raw is None:
+                self._last_hashes_raw = hashes_raw
+            elif hashes_raw < self._last_hashes_raw:
+                self._last_hashes_raw = hashes_raw
+            else:
+                hashes_delta = hashes_raw - self._last_hashes_raw
+                self._last_hashes_raw = hashes_raw
+                self._hashes_session += hashes_delta
             if assign == "fee" or kind == "fee":
                 status = (
                     f"XMRig donate period (fee share, not user accepted) pool={pool}"
@@ -515,6 +536,8 @@ class XmrigRunner:
                 generation=self.generation,
                 job_id=job_label,
                 difficulty=self._job_diff,
+                hashes_total=self._hashes_session,
+                hashes_delta=hashes_delta,
                 raw=summary,
             )
             snap = self.snapshot

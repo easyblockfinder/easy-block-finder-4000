@@ -112,7 +112,7 @@ _PRESETS: dict[str, tuple[PoolPreset, ...]] = {
             password="x",
             pool_kind="solo",
             validation_profile_id="external_default",
-            stats_url_template="",
+            stats_url_template="https://pool.kryptex.com/xmr/miner/stats/{address}",
             notes="Official pool.kryptex.com/xmr regional TCP :7029. SOLO via solo:wallet.",
         ),
         PoolPreset(
@@ -126,7 +126,7 @@ _PRESETS: dict[str, tuple[PoolPreset, ...]] = {
             password="x",
             pool_kind="solo",
             validation_profile_id="external_default",
-            stats_url_template="",
+            stats_url_template="https://pool.kryptex.com/xmr/miner/stats/{address}",
             notes="Official pool.kryptex.com/xmr regional TCP :7029. SOLO via solo:wallet.",
         ),
     ),

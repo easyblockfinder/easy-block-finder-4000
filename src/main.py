@@ -114,6 +114,9 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName(APP_VERSION_LABEL)
+    from ui.wheel_guard import install_wheel_guard
+
+    install_wheel_guard(app)
     _force_light_palette(app)
     app_icon = load_app_icon()
     if not app_icon.isNull():

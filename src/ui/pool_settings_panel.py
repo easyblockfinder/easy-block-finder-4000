@@ -59,13 +59,39 @@ class PoolSettingsPanel(QWidget):
         self._loading = False
         self._testing = False
 
-        box = QGroupBox("Mining pool")
+        self.setStyleSheet(
+            """
+            QLabel#betaBadge {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #d97706, stop:0.55 #c2410c, stop:1 #9a3412
+                );
+                color: #fff7ed;
+                font-family: "Segoe UI", "Cascadia Mono", sans-serif;
+                font-size: 10px;
+                font-weight: 800;
+                letter-spacing: 1.4px;
+                padding: 3px 10px;
+                border-radius: 10px;
+                border: 1px solid #7c2d12;
+            }
+            QLabel#betaBadgeHint {
+                color: #9a3412;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            """
+        )
+
+        box = QGroupBox("Connection")
         box.setObjectName("poolGroup")
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
         outer.addWidget(box)
         lay = QVBoxLayout(box)
-        lay.setSpacing(8)
+        lay.setSpacing(10)
+        lay.setContentsMargins(4, 8, 4, 4)
 
         self.lbl_current = QLabel("")
         self.lbl_current.setObjectName("statKey")
@@ -88,9 +114,24 @@ class PoolSettingsPanel(QWidget):
         self.mode = QComboBox()
         self.mode.addItem("Default (built-in)", "default")
         self.mode.addItem("Preset (verified list)", "preset")
-        self.mode.addItem("Custom", "custom")
+        self.mode.addItem("Custom · BETA", "custom")
         self.mode.currentIndexChanged.connect(self._on_mode_changed)
-        form.addRow("Mode", self.mode)
+
+        mode_wrap = QWidget()
+        mode_row = QHBoxLayout(mode_wrap)
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.setSpacing(8)
+        mode_row.addWidget(self.mode, 1)
+        self.lbl_beta = QLabel("BETA")
+        self.lbl_beta.setObjectName("betaBadge")
+        self.lbl_beta.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_beta.setToolTip(
+            "Custom Mining Pool is in beta. Verify host, TLS, username format, "
+            "and payouts on the pool site yourself."
+        )
+        self.lbl_beta.setVisible(False)
+        mode_row.addWidget(self.lbl_beta, 0, Qt.AlignmentFlag.AlignVCenter)
+        form.addRow("Mode", mode_wrap)
 
         self.preset = QComboBox()
         self.preset.currentIndexChanged.connect(self._refresh_preview)
@@ -142,12 +183,25 @@ class PoolSettingsPanel(QWidget):
 
         lay.addLayout(form)
 
+        self.lbl_beta_hint = QLabel(
+            "Custom Mining Pool · BETA — connection works; payouts and stats "
+            "pages are not verified for every host."
+        )
+        self.lbl_beta_hint.setObjectName("betaBadgeHint")
+        self.lbl_beta_hint.setWordWrap(True)
+        self.lbl_beta_hint.setVisible(False)
+        lay.addWidget(self.lbl_beta_hint)
+
         row = QHBoxLayout()
+        row.setSpacing(8)
         self.btn_apply = QPushButton("Apply pool")
+        self.btn_apply.setObjectName("tabActionBtn")
         self.btn_apply.clicked.connect(self._on_apply)
         self.btn_reset = QPushButton("Reset to default")
+        self.btn_reset.setObjectName("tabActionBtn")
         self.btn_reset.clicked.connect(self._on_reset)
         self.btn_test = QPushButton("Test connection")
+        self.btn_test.setObjectName("tabActionBtn")
         self.btn_test.setToolTip(
             "Requires a real mining.notify/job. TCP or authorize alone is not enough."
         )
@@ -173,6 +227,9 @@ class PoolSettingsPanel(QWidget):
         lay.addWidget(hint)
 
         self._set_custom_visible(False)
+        from ui.wheel_guard import harden_wheel_widgets
+
+        harden_wheel_widgets(self)
 
     def load_network(self, network_id: str, pool_by_network: dict[str, Any]) -> None:
         self._network_id = network_id
@@ -248,6 +305,8 @@ class PoolSettingsPanel(QWidget):
         mode = self.mode.currentData()
         self.worker.setEnabled(mode in ("preset", "custom"))
         self.preset.setEnabled(mode == "preset")
+        self.lbl_beta.setVisible(bool(on))
+        self.lbl_beta_hint.setVisible(bool(on))
 
     def _on_mode_changed(self) -> None:
         mode = self.mode.currentData()

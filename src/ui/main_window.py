@@ -7,12 +7,13 @@ from typing import Iterator
 
 from app_meta import (
     APP_NAME,
+    APP_SHORT,
     APP_TITLE,
     APP_VERSION_LABEL,
     load_app_icon,
     load_app_logo_pixmap,
 )
-from PyQt6.QtCore import QEvent, QObject, QThread, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QSize, QThread, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -116,32 +117,91 @@ QFrame#panel {
     border: 1px solid #d5dde5;
     border-radius: 10px;
 }
-QTabWidget#mineTabs::pane {
-    background: #f7f9fb;
+QFrame#tabSection {
+    background: #ffffff;
     border: 1px solid #d5dde5;
+    border-radius: 12px;
+}
+QLabel#tabSectionTitle {
+    color: #0b3d2e;
+    font-family: "Bahnschrift", "Segoe UI", sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+QLabel#tabSectionHint {
+    color: #5b6b78;
+    font-size: 11px;
+}
+QFrame#statCell {
+    background: #f4f7f9;
+    border: 1px solid #e2e8ee;
     border-radius: 10px;
+}
+QFrame#logPane {
+    background: #fbfcfd;
+    border: 1px solid #d5dde5;
+    border-radius: 12px;
+}
+QTabWidget#mineTabs::pane {
+    background: #eef1f4;
+    border: 1px solid #d5dde5;
+    border-radius: 12px;
     top: -1px;
-    padding: 4px;
+    padding: 2px;
 }
 QTabWidget#mineTabs QTabBar::tab {
-    background: #e8edf2;
+    background: #e2e8ee;
     color: #4a5a68;
     border: 1px solid #d5dde5;
     border-bottom: none;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-    padding: 8px 14px;
-    margin-right: 3px;
+    border-top-left-radius: 9px;
+    border-top-right-radius: 9px;
+    padding: 9px 16px;
+    margin-right: 4px;
+    font-family: "Bahnschrift", "Segoe UI", sans-serif;
     font-weight: 600;
     font-size: 12px;
 }
 QTabWidget#mineTabs QTabBar::tab:selected {
-    background: #f7f9fb;
+    background: #eef1f4;
     color: #0b3d2e;
+    border-top: 2px solid #0d9488;
 }
 QTabWidget#mineTabs QTabBar::tab:hover:!selected {
     background: #f0f3f6;
     color: #15202b;
+}
+QComboBox {
+    background: #ffffff;
+    color: #15202b;
+    border: 1px solid #c8d2dc;
+    border-radius: 8px;
+    padding: 7px 10px;
+    min-height: 22px;
+    font-size: 13px;
+}
+QComboBox:focus {
+    border: 1px solid #0d9488;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 28px;
+}
+QGroupBox#poolGroup {
+    background: #ffffff;
+    border: 1px solid #d5dde5;
+    border-radius: 12px;
+    margin-top: 12px;
+    padding: 14px 12px 12px 12px;
+    font-family: "Bahnschrift", "Segoe UI", sans-serif;
+    font-weight: 700;
+    color: #0b3d2e;
+}
+QGroupBox#poolGroup::title {
+    subcontrol-origin: margin;
+    left: 14px;
+    padding: 0 6px;
 }
 QLineEdit, QSpinBox, QTextEdit, QPlainTextEdit {
     background: #ffffff;
@@ -168,22 +228,38 @@ QPushButton#startBtn {
     color: #ffffff;
     border: none;
     border-radius: 8px;
-    padding: 10px 18px;
+    padding: 7px 14px;
     font-weight: 700;
-    font-size: 13px;
-    min-width: 110px;
+    font-size: 12px;
+    min-width: 90px;
 }
 QPushButton#startBtn:hover { background: #0f766e; }
 QPushButton#startBtn:disabled { background: #9bb0b8; }
+QPushButton#idleStartBtn {
+    background: #ffffff;
+    color: #0f766e;
+    border: 2px solid #0d9488;
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-weight: 700;
+    font-size: 12px;
+    min-width: 110px;
+}
+QPushButton#idleStartBtn:hover { background: #ecfdf5; }
+QPushButton#idleStartBtn:disabled {
+    color: #9bb0b8;
+    border-color: #c8d2dc;
+    background: #f0f3f6;
+}
 QPushButton#stopBtn {
     background: #ffffff;
     color: #9f1239;
     border: 1px solid #e11d48;
     border-radius: 8px;
-    padding: 10px 18px;
+    padding: 7px 14px;
     font-weight: 700;
-    font-size: 13px;
-    min-width: 110px;
+    font-size: 12px;
+    min-width: 90px;
 }
 QPushButton#stopBtn:hover { background: #fff1f2; }
 QPushButton#stopBtn:disabled {
@@ -196,16 +272,31 @@ QPushButton#changeNetworkBtn {
     color: #0f766e;
     border: 1px solid #0d9488;
     border-radius: 8px;
-    padding: 10px 18px;
+    padding: 7px 14px;
     font-weight: 700;
-    font-size: 13px;
-    min-width: 140px;
+    font-size: 12px;
+    min-width: 120px;
 }
 QPushButton#changeNetworkBtn:hover { background: #ecfdf5; }
 QPushButton#changeNetworkBtn:disabled {
     color: #9bb0b8;
     border-color: #c8d2dc;
     background: #f0f3f6;
+}
+QPushButton#supportDevBtn {
+    background: #ffffff;
+    color: #15202b;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 3px 9px;
+    font-weight: 600;
+    font-size: 11px;
+    min-height: 22px;
+    max-height: 26px;
+}
+QPushButton#supportDevBtn:hover {
+    background: #f8fafc;
+    border-color: #9bb0b8;
 }
 QLabel#unitFixed {
     color: #334155;
@@ -253,7 +344,87 @@ QLabel#blockAlertBody {
 QFrame#blockDetail, QFrame#shareDetail {
     background: #ffffff;
     border: 1px solid #d5dde5;
+    border-radius: 12px;
+}
+QPushButton#tabActionBtn {
+    background: #ffffff;
+    color: #0f766e;
+    border: 1px solid #0d9488;
     border-radius: 8px;
+    padding: 8px 14px;
+    font-weight: 700;
+    font-size: 12px;
+}
+QPushButton#tabActionBtn:hover { background: #ecfdf5; }
+QPushButton#tabActionBtn:disabled {
+    color: #9bb0b8;
+    border-color: #c8d2dc;
+    background: #f0f3f6;
+}
+QFrame#summaryCard {
+    background: #ffffff;
+    border: 1px solid #d5dde5;
+    border-radius: 8px;
+}
+QLabel#summaryCardTitle {
+    color: #0b3d2e;
+    font-family: "Bahnschrift", "Segoe UI", sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+}
+QLabel#summaryCap {
+    color: #6b7c8a;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+QLabel#summaryVal {
+    color: #15202b;
+    font-size: 11px;
+    font-weight: 700;
+}
+QLabel#summaryEngine {
+    color: #334155;
+    font-size: 10px;
+    font-weight: 600;
+}
+QFrame#notesCard {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+}
+QLabel#notesTitle {
+    color: #1e3a8a;
+    font-family: "Bahnschrift", "Segoe UI", sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+}
+QLabel#notesBody {
+    color: #1e40af;
+    font-size: 10px;
+}
+QLabel#statusChip {
+    background: #eef2f6;
+    color: #334155;
+    border: 1px solid #d5dde5;
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 10px;
+    font-weight: 700;
+}
+QLabel#statusChipOn {
+    background: #ecfdf5;
+    color: #047857;
+    border: 1px solid #a7f3d0;
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 10px;
+    font-weight: 700;
+}
+QLabel#chromeVersion {
+    color: #6b7c8a;
+    font-size: 10px;
+    font-weight: 600;
 }
 QCheckBox, QRadioButton {
     color: #15202b;
@@ -301,6 +472,104 @@ def _stat_pair(key: str, mono: bool = False) -> tuple[QLabel, QLabel]:
     return k, v
 
 
+def _stat_cell(key_lbl: QLabel, val_lbl: QLabel) -> QFrame:
+    cell = QFrame()
+    cell.setObjectName("statCell")
+    lay = QVBoxLayout(cell)
+    lay.setContentsMargins(12, 10, 12, 10)
+    lay.setSpacing(4)
+    lay.addWidget(key_lbl)
+    lay.addWidget(val_lbl)
+    return cell
+
+
+def _tab_section(
+    title: str, *, hint: str = ""
+) -> tuple[QFrame, QVBoxLayout]:
+    """Titled content card used inside mining tabs."""
+    frame = QFrame()
+    frame.setObjectName("tabSection")
+    outer = QVBoxLayout(frame)
+    outer.setContentsMargins(16, 14, 16, 14)
+    outer.setSpacing(10)
+    head = QVBoxLayout()
+    head.setSpacing(3)
+    t = QLabel(title)
+    t.setObjectName("tabSectionTitle")
+    head.addWidget(t)
+    if hint:
+        h = QLabel(hint)
+        h.setObjectName("tabSectionHint")
+        h.setWordWrap(True)
+        head.addWidget(h)
+    outer.addLayout(head)
+    body = QVBoxLayout()
+    body.setSpacing(10)
+    outer.addLayout(body)
+    return frame, body
+
+
+def _stats_grid(pairs: list[tuple[QLabel, QLabel]], *, cols: int = 2) -> QGridLayout:
+    grid = QGridLayout()
+    grid.setHorizontalSpacing(10)
+    grid.setVerticalSpacing(10)
+    for i in range(cols):
+        grid.setColumnStretch(i, 1)
+    for i, (k, v) in enumerate(pairs):
+        r, c = divmod(i, cols)
+        grid.addWidget(_stat_cell(k, v), r, c)
+    return grid
+
+
+def _summary_field(caption: str) -> tuple[QWidget, QLabel]:
+    wrap = QWidget()
+    lay = QVBoxLayout(wrap)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(2)
+    cap = QLabel(caption.upper())
+    cap.setObjectName("summaryCap")
+    val = QLabel("—")
+    val.setObjectName("summaryVal")
+    val.setWordWrap(True)
+    lay.addWidget(cap)
+    lay.addWidget(val)
+    return wrap, val
+
+
+def _status_chip(text: str, *, on: bool = False) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setObjectName("statusChipOn" if on else "statusChip")
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    return lbl
+
+
+def _support_heart_icon() -> QIcon:
+    """Outlined red heart for Support Development (no emoji glyph)."""
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
+
+    size = 28
+    pix = QPixmap(size, size)
+    pix.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    path = QPainterPath()
+    path.moveTo(14, 24)
+    path.cubicTo(QPointF(4, 17), QPointF(3, 9), QPointF(8.5, 6.5))
+    path.cubicTo(QPointF(11.5, 5), QPointF(14, 7), QPointF(14, 9.5))
+    path.cubicTo(QPointF(14, 7), QPointF(16.5, 5), QPointF(19.5, 6.5))
+    path.cubicTo(QPointF(25, 9), QPointF(24, 17), QPointF(14, 24))
+    pen = QPen(QColor("#e11d48"))
+    pen.setWidthF(2.2)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawPath(path)
+    p.end()
+    return QIcon(pix)
+
+
 def _temp_spin_row(spin: QSpinBox) -> QWidget:
     """Digit SpinBox + fixed °C label (unit cannot be removed)."""
     wrap = QWidget()
@@ -338,8 +607,8 @@ class MainWindow(QMainWindow):
         self._profile = get_profile(self._network_id)
         w = int(self._cfg.get("window_width") or 760)
         h = int(self._cfg.get("window_height") or 720)
-        self.resize(max(680, w), max(640, h))
         self.setMinimumSize(820, 620)
+        self._clamp_window_to_screen(preferred_w=max(820, w), preferred_h=max(640, h))
 
         self._bridge = _StatsBridge()
         self._bridge.updated.connect(self._apply_stats)
@@ -397,57 +666,66 @@ class MainWindow(QMainWindow):
         self._hw_page.back_clicked.connect(self._on_hardware_back_to_network)
         self._stack.addWidget(self._hw_page)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._mine_scroll = scroll
-        self._stack.addWidget(scroll)
+        # Mining page: fixed header + tabs (scroll only inside tabs)
+        mine_page = QWidget()
+        mine_page.setObjectName("root")
+        self._mine_scroll = mine_page  # page widget (name kept for call sites)
+        self._stack.addWidget(mine_page)
 
-        root = QWidget()
-        root.setObjectName("root")
-        scroll.setWidget(root)
-        layout = QVBoxLayout(root)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(14)
+        layout = QVBoxLayout(mine_page)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(8)
 
-        # Logo + scoreboard under it | Donate aligned to logo top-right
-        head = QHBoxLayout()
-        head.setSpacing(12)
-        brand_col = QVBoxLayout()
-        brand_col.setSpacing(8)
-        logo_pix = load_app_logo_pixmap(440, 96)
+        def _tab_scroll(inner: QWidget) -> QScrollArea:
+            sa = QScrollArea()
+            sa.setWidgetResizable(True)
+            sa.setFrameShape(QFrame.Shape.NoFrame)
+            sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            sa.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            sa.setWidget(inner)
+            return sa
+
+        # Fixed chrome matching dashboard mock (scoreboard + summary + controls)
+        header = QWidget()
+        header.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        h_layout = QVBoxLayout(header)
+        h_layout.setContentsMargins(0, 0, 0, 0)
+        h_layout.setSpacing(8)
+
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(10)
+        logo_pix = load_app_logo_pixmap(360, 72)
         brand = QLabel()
         brand.setObjectName("brand")
         if not logo_pix.isNull():
             brand.setPixmap(logo_pix)
-            brand.setMinimumHeight(72)
+            brand.setMinimumHeight(56)
         else:
             brand.setText(APP_NAME)
-            brand.setFont(QFont("Bahnschrift", 26, QFont.Weight.Bold))
+            brand.setFont(QFont("Bahnschrift", 22, QFont.Weight.Bold))
+        brand_col = QVBoxLayout()
+        brand_col.setSpacing(2)
         brand_col.addWidget(brand)
         ver = QLabel(APP_VERSION_LABEL)
-        ver.setObjectName("tagline")
+        ver.setObjectName("chromeVersion")
         brand_col.addWidget(ver)
-        self.scoreboard = ScoreboardWidget(compact=False)
-        brand_col.addWidget(self.scoreboard)
-        head.addLayout(brand_col, 1)
+        brand_row.addLayout(brand_col, 0)
+        brand_row.addStretch(1)
+        h_layout.addLayout(brand_row)
 
-        right_btns = QVBoxLayout()
-        right_btns.setSpacing(8)
-        right_btns.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
-        self.btn_donate = QPushButton("Donate")
-        self.btn_donate.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_donate.setMinimumHeight(36)
-        self.btn_donate.setStyleSheet(
-            "QPushButton { background: #d32f2f; color: #ffffff; font-weight: 700; "
-            "padding: 6px 16px; border-radius: 6px; }"
-            "QPushButton:hover { background: #e53935; }"
+        # Scoreboard + cards + controls share one left-aligned band (no right overflow).
+        self._chrome_band = QWidget()
+        self._chrome_band.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
         )
-        self.btn_donate.clicked.connect(self._on_donate)
-        right_btns.addWidget(self.btn_donate, 0, Qt.AlignmentFlag.AlignRight)
-        right_btns.addStretch(1)
-        head.addLayout(right_btns, 0)
-        layout.addLayout(head)
+        band = QVBoxLayout(self._chrome_band)
+        band.setContentsMargins(0, 0, 0, 0)
+        band.setSpacing(8)
+
+        self.scoreboard = ScoreboardWidget(compact=False)
+        band.addWidget(self.scoreboard, 0, Qt.AlignmentFlag.AlignLeft)
 
         self._scoreboard_overlay = ScoreboardOverlayWindow(
             on_user_close=self._on_scoreboard_overlay_closed,
@@ -455,87 +733,212 @@ class MainWindow(QMainWindow):
         )
         self._scoreboard_overlay.activated.connect(self._show_from_tray)
 
-        net_row = QHBoxLayout()
-        self.lbl_network_badge = QLabel("")
-        self.lbl_network_badge.setObjectName("sectionTitle")
-        net_row.addWidget(self.lbl_network_badge, 1)
-        layout.addLayout(net_row)
-
-        self.lbl_tagline = QLabel("")
-        self.lbl_tagline.setObjectName("tagline")
-        self.lbl_tagline.setWordWrap(True)
-        layout.addWidget(self.lbl_tagline)
-
-        diff_note = QLabel(
-            "Share difficulty (mining.set_difficulty) is for pool feedback only; "
-            "a low share difficulty does not change real block find odds. "
-            "The accepted counter increases only when the server mining.submit response has result=true."
+        cards_w = QWidget()
+        cards_w.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        diff_note.setObjectName("tagline")
-        diff_note.setWordWrap(True)
-        layout.addWidget(diff_note)
+        cards = QHBoxLayout(cards_w)
+        cards.setContentsMargins(0, 0, 0, 0)
+        cards.setSpacing(8)
 
-        # Start / Stop always visible (not buried in a tab)
-        btns = QHBoxLayout()
-        btns.setSpacing(10)
-        self.start_btn = QPushButton("Start")
+        net_card = QFrame()
+        net_card.setObjectName("summaryCard")
+        net_lay = QVBoxLayout(net_card)
+        net_lay.setContentsMargins(8, 6, 8, 6)
+        net_lay.setSpacing(4)
+        net_title = QLabel("Network summary")
+        net_title.setObjectName("summaryCardTitle")
+        net_lay.addWidget(net_title)
+        fields = QHBoxLayout()
+        fields.setSpacing(8)
+        w_net, self.lbl_sum_network = _summary_field("Network")
+        w_algo, self.lbl_sum_algo = _summary_field("Algorithm")
+        w_pool, self.lbl_sum_pool = _summary_field("Pool")
+        w_mode, self.lbl_sum_mode = _summary_field("Mode")
+        for w in (w_net, w_algo, w_pool, w_mode):
+            fields.addWidget(w, 1)
+        net_lay.addLayout(fields)
+        self.lbl_sum_engine = QLabel("Engine: —")
+        self.lbl_sum_engine.setObjectName("summaryEngine")
+        self.lbl_sum_engine.setWordWrap(True)
+        net_lay.addWidget(self.lbl_sum_engine)
+        # Keep legacy labels for call sites (hidden)
+        self.lbl_network_badge = QLabel("")
+        self.lbl_network_badge.hide()
+        self.lbl_tagline = QLabel("")
+        self.lbl_tagline.hide()
+        cards.addWidget(net_card, 3)
+
+        notes_card = QFrame()
+        notes_card.setObjectName("notesCard")
+        notes_lay = QVBoxLayout(notes_card)
+        notes_lay.setContentsMargins(8, 6, 8, 6)
+        notes_lay.setSpacing(3)
+        notes_title = QLabel("Mining notes")
+        notes_title.setObjectName("notesTitle")
+        notes_lay.addWidget(notes_title)
+        notes_body = QLabel(
+            "Share difficulty is pool feedback only — it does not change block odds. "
+            "Accepted rises only when mining.submit returns result=true."
+        )
+        notes_body.setObjectName("notesBody")
+        notes_body.setWordWrap(True)
+        notes_lay.addWidget(notes_body)
+        cards.addWidget(notes_card, 2)
+        band.addWidget(cards_w)
+
+        ctrl_w = QWidget()
+        ctrl_w.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        ctrl = QHBoxLayout(ctrl_w)
+        ctrl.setContentsMargins(0, 0, 0, 0)
+        ctrl.setSpacing(8)
+        self.start_btn = QPushButton("▶  Start")
         self.start_btn.setObjectName("startBtn")
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stop_btn = QPushButton("Stop")
+        self.idle_start_btn = QPushButton("Start Idle Mode")
+        self.idle_start_btn.setObjectName("idleStartBtn")
+        self.idle_start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.idle_start_btn.setToolTip(
+            "Start Idle Mode: mining begins now at “While using PC” intensity; "
+            "after the AFK timeout it switches to “While AFK” intensity. "
+            "Configure under Settings → Idle Mode."
+        )
+        self.stop_btn = QPushButton("■  Stop")
         self.stop_btn.setObjectName("stopBtn")
         self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.stop_btn.setEnabled(False)
         self.btn_change_network = QPushButton("Change network")
         self.btn_change_network.setObjectName("changeNetworkBtn")
         self.btn_change_network.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_change_network.setMinimumHeight(40)
+        self.btn_change_network.setMinimumHeight(34)
         self.btn_change_network.clicked.connect(self._on_change_network)
         self.start_btn.clicked.connect(self._on_start)
+        self.idle_start_btn.clicked.connect(self._on_start_idle)
         self.stop_btn.clicked.connect(self._on_stop)
-        btns.addWidget(self.start_btn)
-        btns.addWidget(self.stop_btn)
-        btns.addWidget(self.btn_change_network)
-        btns.addStretch(1)
-        layout.addLayout(btns)
+        ctrl.addWidget(self.start_btn)
+        ctrl.addWidget(self.idle_start_btn)
+        ctrl.addWidget(self.stop_btn)
+        ctrl.addWidget(self.btn_change_network)
+        ctrl.addStretch(1)
+        self.chip_conn = _status_chip("Not connected", on=False)
+        self.chip_mode = _status_chip("Solo mining", on=False)
+        self.chip_idle = _status_chip("Idle Mode off", on=False)
+        ctrl.addWidget(self.chip_conn, 0, Qt.AlignmentFlag.AlignVCenter)
+        ctrl.addWidget(self.chip_mode, 0, Qt.AlignmentFlag.AlignVCenter)
+        ctrl.addWidget(self.chip_idle, 0, Qt.AlignmentFlag.AlignVCenter)
+        band.addWidget(ctrl_w)
+
+        h_layout.addWidget(self._chrome_band, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(header, 0)
+        QTimer.singleShot(0, self._fit_chrome_to_scoreboard)
+
+        from worker.idle_session import IdleSessionState
+
+        self._idle_state = IdleSessionState.STOPPED
+        self._idle_launching = False
 
         tabs = QTabWidget()
         tabs.setObjectName("mineTabs")
         tabs.setDocumentMode(True)
+        tabs.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self._mine_tabs = tabs
+
+        self.btn_donate = QPushButton(" Support Development")
+        self.btn_donate.setObjectName("supportDevBtn")
+        self.btn_donate.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_donate.setIcon(_support_heart_icon())
+        self.btn_donate.setIconSize(QSize(11, 11))
+        self.btn_donate.clicked.connect(self._on_donate)
+        corner = QWidget()
+        corner_lay = QHBoxLayout(corner)
+        corner_lay.setContentsMargins(0, 0, 2, 2)
+        corner_lay.setSpacing(0)
+        corner_lay.addWidget(self.btn_donate)
+        tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
 
         # --- Settings (default) ---
         settings = QWidget()
         s_layout = QVBoxLayout(settings)
-        s_layout.setContentsMargins(14, 12, 14, 12)
-        s_layout.setSpacing(10)
+        s_layout.setContentsMargins(16, 14, 16, 14)
+        s_layout.setSpacing(12)
 
-        self.addr_lbl = QLabel("Payout address")
+        pay_card, pay_body = _tab_section(
+            "Payout address",
+            hint="Saved per network. Pool host and TLS live on the Mining pool tab.",
+        )
+        self.addr_lbl = QLabel("Wallet / payout address")
         self.addr_lbl.setObjectName("statKey")
-        s_layout.addWidget(self.addr_lbl)
-
+        pay_body.addWidget(self.addr_lbl)
         self.address_edit = QLineEdit()
-        self.address_edit.setPlaceholderText("network wallet address — saved automatically")
-        self.address_edit.setMinimumHeight(36)
+        self.address_edit.setPlaceholderText(
+            "network wallet address — saved automatically"
+        )
+        self.address_edit.setMinimumHeight(40)
         self.address_edit.setFont(QFont("Cascadia Mono", 11))
         self.address_edit.editingFinished.connect(self._persist_form)
         self.address_edit.textChanged.connect(self._on_address_changed)
-        s_layout.addWidget(self.address_edit)
-
+        pay_body.addWidget(self.address_edit)
         self._addr_hint = QLabel("")
-        self._addr_hint.setObjectName("statKey")
+        self._addr_hint.setObjectName("tabSectionHint")
         self._addr_hint.setWordWrap(True)
-        s_layout.addWidget(self._addr_hint)
+        pay_body.addWidget(self._addr_hint)
         self._refresh_addr_hint()
+        s_layout.addWidget(pay_card)
 
+        sess_card, sess_body = _tab_section(
+            "Session",
+            hint="Intensity, thermal limits, and Idle Mode are under Settings menu.",
+        )
         self.test_mode = QCheckBox("Test mode (no pool, no real submit)")
         self.test_mode.setChecked(bool(self._cfg.get("test_mode")))
         self.test_mode.toggled.connect(self._persist_form)
-        s_layout.addWidget(self.test_mode)
+        sess_body.addWidget(self.test_mode)
+        s_layout.addWidget(sess_card)
 
+        health_card, health_body = _tab_section(
+            "Thermal & engine fees",
+            hint="XMRig/Rigel developer fees are not added to your accepted count.",
+        )
+        self.lbl_thermal_src = QLabel("Temperature source: —")
+        self.lbl_thermal_src.setObjectName("statKey")
+        self.lbl_thermal_src.setWordWrap(True)
+        health_body.addWidget(self.lbl_thermal_src)
+        self.lbl_thermal_unsafe = QLabel("")
+        self.lbl_thermal_unsafe.setWordWrap(True)
+        self.lbl_thermal_unsafe.setStyleSheet(
+            "color: #b91c1c; font-weight: 700; padding: 6px 8px; "
+            "background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;"
+        )
+        self.lbl_thermal_unsafe.setVisible(False)
+        health_body.addWidget(self.lbl_thermal_unsafe)
+        self._refresh_thermal_unsafe_banner()
+        fee_row = QHBoxLayout()
+        fee_row.setSpacing(10)
+        self.lbl_engine_fee = QLabel("Engine fee share: 0")
+        self.lbl_engine_fee.setObjectName("statKey")
+        self.lbl_unattributed = QLabel("Unattributed shares: 0")
+        self.lbl_unattributed.setObjectName("statKey")
+        fee_row.addWidget(self.lbl_engine_fee, 1)
+        fee_row.addWidget(self.lbl_unattributed, 1)
+        health_body.addLayout(fee_row)
+        s_layout.addWidget(health_card)
+        s_layout.addStretch(1)
+        tabs.addTab(_tab_scroll(settings), "Settings")
+
+        # --- Mining pool ---
         from ui.pool_settings_panel import PoolSettingsPanel
 
+        pool_tab = QWidget()
+        p_layout = QVBoxLayout(pool_tab)
+        p_layout.setContentsMargins(16, 14, 16, 14)
+        p_layout.setSpacing(12)
         self.pool_panel = PoolSettingsPanel(
-            is_running=self.controller.is_running,
+            is_running=lambda: self.controller.is_running()
+            or self._idle_session_active(),
             request_stop=self._on_stop,
             get_wallet=lambda: self.address_edit.text(),
         )
@@ -543,177 +946,165 @@ class MainWindow(QMainWindow):
         self.pool_panel.load_network(
             self._network_id, self._cfg.get("pool_by_network") or {}
         )
-        s_layout.addWidget(self.pool_panel)
-
+        p_layout.addWidget(self.pool_panel)
         self.lbl_pool_banner = QLabel("")
         self.lbl_pool_banner.setWordWrap(True)
         self.lbl_pool_banner.setStyleSheet(
-            "color: #b71c1c; font-weight: 600; padding: 4px 0;"
+            "color: #b91c1c; font-weight: 600; padding: 8px 10px; "
+            "background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;"
         )
         self.lbl_pool_banner.setVisible(False)
-        s_layout.addWidget(self.lbl_pool_banner)
-
-        settings_hint = QLabel(
-            "Intensity, temperature limits, CPU threads, and GPU pick are in "
-            "Settings (menu → Settings…)."
-        )
-        settings_hint.setObjectName("tagline")
-        settings_hint.setWordWrap(True)
-        s_layout.addWidget(settings_hint)
-
-        self.lbl_thermal_src = QLabel("Temperature source: —")
-        self.lbl_thermal_src.setObjectName("statKey")
-        self.lbl_thermal_src.setWordWrap(True)
-        s_layout.addWidget(self.lbl_thermal_src)
-
-        self.lbl_thermal_unsafe = QLabel("")
-        self.lbl_thermal_unsafe.setWordWrap(True)
-        self.lbl_thermal_unsafe.setStyleSheet(
-            "color: #d32f2f; font-weight: 700; padding: 4px 0;"
-        )
-        self.lbl_thermal_unsafe.setVisible(False)
-        s_layout.addWidget(self.lbl_thermal_unsafe)
-        self._refresh_thermal_unsafe_banner()
-
-        self.lbl_engine_fee = QLabel("Engine fee share: 0")
-        self.lbl_engine_fee.setObjectName("statKey")
-        s_layout.addWidget(self.lbl_engine_fee)
-        self.lbl_unattributed = QLabel("Unattributed shares: 0")
-        self.lbl_unattributed.setObjectName("statKey")
-        s_layout.addWidget(self.lbl_unattributed)
-
-        fee_hint = QLabel(
-            "Note: XMRig/Rigel developer fees are not added to your accepted count. "
-            "This app does not redirect mining to donations — use Donate to support."
-        )
-        fee_hint.setObjectName("tagline")
-        fee_hint.setWordWrap(True)
-        s_layout.addWidget(fee_hint)
-        s_layout.addStretch(1)
-        tabs.addTab(settings, "Settings")
+        p_layout.addWidget(self.lbl_pool_banner)
+        p_layout.addStretch(1)
+        tabs.addTab(_tab_scroll(pool_tab), "Mining pool")
 
         # --- Status ---
         status = QWidget()
         st_outer = QVBoxLayout(status)
-        st_outer.setContentsMargins(14, 12, 14, 12)
-        st_outer.setSpacing(10)
-
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(10)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(3, 1)
+        st_outer.setContentsMargins(16, 14, 16, 14)
+        st_outer.setSpacing(12)
 
         self.lbl_conn_k, self.lbl_conn = _stat_pair("Connection")
-        self.lbl_activity_k, self.lbl_activity = _stat_pair("Auto-idle mode")
+        self.lbl_activity_k, self.lbl_activity = _stat_pair("Idle Mode")
         self.lbl_device_k, self.lbl_device = _stat_pair("Device")
         self.lbl_rate_k, self.lbl_rate = _stat_pair("Hash rate")
+        self.lbl_temp_k, self.lbl_temp = _stat_pair("Temperature")
+        self.lbl_time_k, self.lbl_time = _stat_pair("Elapsed")
+        live_card, live_body = _tab_section(
+            "Live session",
+            hint="Connection, device load, and Idle Mode state.",
+        )
+        live_body.addLayout(
+            _stats_grid(
+                [
+                    (self.lbl_conn_k, self.lbl_conn),
+                    (self.lbl_activity_k, self.lbl_activity),
+                    (self.lbl_device_k, self.lbl_device),
+                    (self.lbl_rate_k, self.lbl_rate),
+                    (self.lbl_temp_k, self.lbl_temp),
+                    (self.lbl_time_k, self.lbl_time),
+                ]
+            )
+        )
+        st_outer.addWidget(live_card)
+
         self.lbl_total_k, self.lbl_total = _stat_pair("Session attempts", mono=True)
         self.lbl_lifetime_k, self.lbl_lifetime = _stat_pair("Lifetime attempts", mono=True)
-        self.lbl_time_k, self.lbl_time = _stat_pair("Elapsed")
         self.lbl_shares_k, self.lbl_shares = _stat_pair("Share")
         self.lbl_diff_k, self.lbl_diff = _stat_pair("Server set_difficulty")
         self.lbl_gpu_best_k, self.lbl_gpu_best = _stat_pair("GPU best difficulty")
         self.lbl_acc_best_k, self.lbl_acc_best = _stat_pair("Accepted best difficulty")
-        self.lbl_temp_k, self.lbl_temp = _stat_pair("Temperature")
+        work_card, work_body = _tab_section(
+            "Work & difficulty",
+            hint="Attempts and difficulty telemetry for this session.",
+        )
+        work_body.addLayout(
+            _stats_grid(
+                [
+                    (self.lbl_total_k, self.lbl_total),
+                    (self.lbl_lifetime_k, self.lbl_lifetime),
+                    (self.lbl_shares_k, self.lbl_shares),
+                    (self.lbl_diff_k, self.lbl_diff),
+                    (self.lbl_gpu_best_k, self.lbl_gpu_best),
+                    (self.lbl_acc_best_k, self.lbl_acc_best),
+                ]
+            )
+        )
+        st_outer.addWidget(work_card)
+
         self.lbl_job_k, self.lbl_job = _stat_pair("Current job ID", mono=True)
         self.lbl_payout_k, self.lbl_payout = _stat_pair("Payout address", mono=True)
         self.lbl_coinbase_k, self.lbl_coinbase = _stat_pair("Coinbase / note")
-
-        pairs = [
-            (self.lbl_conn_k, self.lbl_conn),
-            (self.lbl_activity_k, self.lbl_activity),
-            (self.lbl_device_k, self.lbl_device),
-            (self.lbl_rate_k, self.lbl_rate),
-            (self.lbl_total_k, self.lbl_total),
-            (self.lbl_lifetime_k, self.lbl_lifetime),
-            (self.lbl_time_k, self.lbl_time),
-            (self.lbl_shares_k, self.lbl_shares),
-            (self.lbl_diff_k, self.lbl_diff),
-            (self.lbl_gpu_best_k, self.lbl_gpu_best),
-            (self.lbl_acc_best_k, self.lbl_acc_best),
-            (self.lbl_temp_k, self.lbl_temp),
-            (self.lbl_job_k, self.lbl_job),
-            (self.lbl_payout_k, self.lbl_payout),
-            (self.lbl_coinbase_k, self.lbl_coinbase),
-        ]
-        for i, (k, v) in enumerate(pairs):
-            r, c = divmod(i, 2)
-            grid.addWidget(k, r * 2, c * 2)
-            grid.addWidget(v, r * 2 + 1, c * 2, 1, 2)
-
-        st_outer.addLayout(grid)
+        job_card, job_body = _tab_section("Job & payout")
+        job_body.addLayout(
+            _stats_grid(
+                [
+                    (self.lbl_job_k, self.lbl_job),
+                    (self.lbl_payout_k, self.lbl_payout),
+                    (self.lbl_coinbase_k, self.lbl_coinbase),
+                ],
+                cols=1,
+            )
+        )
+        st_outer.addWidget(job_card)
 
         self.lbl_accepted_best_banner = QLabel("")
         self.lbl_accepted_best_banner.setObjectName("acceptedBestBanner")
         self.lbl_accepted_best_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_accepted_best_banner.setVisible(False)
         self.lbl_accepted_best_banner.setStyleSheet(
-            "color: #1b5e20; font-weight: 700; padding: 4px;"
+            "color: #14532d; font-weight: 700; padding: 8px; "
+            "background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px;"
         )
         st_outer.addWidget(self.lbl_accepted_best_banner)
         self._accepted_best_banner_timer = QTimer(self)
         self._accepted_best_banner_timer.setSingleShot(True)
         self._accepted_best_banner_timer.timeout.connect(self._hide_accepted_best_banner)
 
-        wk = QLabel("Last kernel")
-        wk.setObjectName("statKey")
-        st_outer.addWidget(wk)
+        run_card, run_body = _tab_section("Runtime")
         self.lbl_work = QLabel("no kernel yet (connected ≠ hashing)")
         self.lbl_work.setObjectName("statValMono")
         self.lbl_work.setWordWrap(True)
         self.lbl_work.setMinimumHeight(36)
-        self.lbl_work.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        st_outer.addWidget(self.lbl_work)
-
+        self.lbl_work.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        run_body.addWidget(self.lbl_work)
         self.lbl_status = QLabel("Ready")
         self.lbl_status.setObjectName("statusLine")
         self.lbl_status.setWordWrap(True)
         self.lbl_status.setMinimumHeight(40)
-        st_outer.addWidget(self.lbl_status)
+        run_body.addWidget(self.lbl_status)
+        st_outer.addWidget(run_card)
 
+        pool_card, pool_body = _tab_section(
+            "Pool page",
+            hint="Server stats may lag at low hashrate or high mindiff.",
+        )
         stats_row = QHBoxLayout()
         self.lbl_stats_url = QLabel("Pool stats: —")
         self.lbl_stats_url.setObjectName("statKey")
         self.lbl_stats_url.setWordWrap(True)
         self.btn_stats = QPushButton("Open pool page")
+        self.btn_stats.setObjectName("tabActionBtn")
         self.btn_stats.setEnabled(False)
         self.btn_stats.clicked.connect(self._open_ckpool_stats)
         stats_row.addWidget(self.lbl_stats_url, 1)
         stats_row.addWidget(self.btn_stats, 0)
-        st_outer.addLayout(stats_row)
-        self.lbl_stats_hint = QLabel(
-            "Server stats may lag; with low hash rate / high mindiff they "
-            "may not show up immediately."
-        )
-        self.lbl_stats_hint.setObjectName("statKey")
+        pool_body.addLayout(stats_row)
+        self.lbl_stats_hint = QLabel("")
+        self.lbl_stats_hint.setObjectName("tabSectionHint")
         self.lbl_stats_hint.setWordWrap(True)
-        st_outer.addWidget(self.lbl_stats_hint)
+        self.lbl_stats_hint.setVisible(False)
+        pool_body.addWidget(self.lbl_stats_hint)
+        st_outer.addWidget(pool_card)
 
-        submit_title = QLabel("mining.submit log (request id)")
-        submit_title.setObjectName("statKey")
-        st_outer.addWidget(submit_title)
+        sub_card, sub_body = _tab_section(
+            "mining.submit log",
+            hint="Request/response pairs match by id. Accepted only when result=true.",
+        )
         self.submit_log_view = QTextEdit()
         self.submit_log_view.setReadOnly(True)
-        self.submit_log_view.setMinimumHeight(90)
+        self.submit_log_view.setMinimumHeight(110)
         self.submit_log_view.setFont(QFont("Cascadia Mono", 9))
         self.submit_log_view.setPlaceholderText(
-            "Submit request/response pairs match by id here. Accepted only when result=true."
+            "Submit traffic appears here while mining."
         )
-        st_outer.addWidget(self.submit_log_view, 1)
-        tabs.addTab(status, "Status")
+        sub_body.addWidget(self.submit_log_view, 1)
+        st_outer.addWidget(sub_card, 1)
+        tabs.addTab(_tab_scroll(status), "Status")
 
         # --- Block ---
         block_tab = QWidget()
         bp = QVBoxLayout(block_tab)
-        bp.setContentsMargins(14, 12, 14, 12)
-        bp.setSpacing(8)
+        bp.setContentsMargins(16, 14, 16, 14)
+        bp.setSpacing(12)
 
         self.block_alert = QFrame()
         self.block_alert.setObjectName("blockAlert")
         self.block_alert.setVisible(False)
         ba = QVBoxLayout(self.block_alert)
-        ba.setContentsMargins(10, 8, 10, 8)
+        ba.setContentsMargins(14, 12, 14, 12)
         ba.setSpacing(6)
         self.lbl_block_alert_title = QLabel("BLOCK CANDIDATE")
         self.lbl_block_alert_title.setObjectName("blockAlertTitle")
@@ -724,20 +1115,10 @@ class MainWindow(QMainWindow):
         ba.addWidget(self.lbl_block_alert_body)
         bp.addWidget(self.block_alert)
 
-        note = QLabel(
-            "No payout is shown until the network accepts the block. This area lists candidates only."
+        blk_card, blk_body = _tab_section(
+            "Latest candidate",
+            hint="No payout until the network accepts the block — candidates only.",
         )
-        note.setObjectName("statKey")
-        note.setWordWrap(True)
-        bp.addWidget(note)
-
-        detail = QFrame()
-        detail.setObjectName("blockDetail")
-        dg = QGridLayout(detail)
-        dg.setContentsMargins(10, 8, 10, 8)
-        dg.setHorizontalSpacing(12)
-        dg.setVerticalSpacing(6)
-
         self.lbl_blk_count_k, self.lbl_blk_count = _stat_pair("Candidate count")
         self.lbl_blk_time_k, self.lbl_blk_time = _stat_pair("Time")
         self.lbl_blk_nonce_k, self.lbl_blk_nonce = _stat_pair("Nonce", mono=True)
@@ -745,98 +1126,105 @@ class MainWindow(QMainWindow):
         self.lbl_blk_status_k, self.lbl_blk_status = _stat_pair("Submit / pool")
         self.lbl_blk_chain_k, self.lbl_blk_chain = _stat_pair("Chain status")
         self.lbl_blk_hash_k, self.lbl_blk_hash = _stat_pair("Hash", mono=True)
-
-        blk_pairs = [
-            (self.lbl_blk_count_k, self.lbl_blk_count),
-            (self.lbl_blk_time_k, self.lbl_blk_time),
-            (self.lbl_blk_nonce_k, self.lbl_blk_nonce),
-            (self.lbl_blk_job_k, self.lbl_blk_job),
-            (self.lbl_blk_status_k, self.lbl_blk_status),
-            (self.lbl_blk_chain_k, self.lbl_blk_chain),
-        ]
-        for i, (k, v) in enumerate(blk_pairs):
-            r, c = divmod(i, 2)
-            dg.addWidget(k, r * 2, c * 2)
-            dg.addWidget(v, r * 2 + 1, c * 2, 1, 2)
-        dg.addWidget(self.lbl_blk_hash_k, 6, 0)
-        dg.addWidget(self.lbl_blk_hash, 7, 0, 1, 4)
+        blk_body.addLayout(
+            _stats_grid(
+                [
+                    (self.lbl_blk_count_k, self.lbl_blk_count),
+                    (self.lbl_blk_time_k, self.lbl_blk_time),
+                    (self.lbl_blk_nonce_k, self.lbl_blk_nonce),
+                    (self.lbl_blk_job_k, self.lbl_blk_job),
+                    (self.lbl_blk_status_k, self.lbl_blk_status),
+                    (self.lbl_blk_chain_k, self.lbl_blk_chain),
+                ]
+            )
+        )
+        hash_cell = _stat_cell(self.lbl_blk_hash_k, self.lbl_blk_hash)
         self.lbl_blk_hash.setMinimumHeight(40)
-        bp.addWidget(detail)
+        blk_body.addWidget(hash_cell)
+        bp.addWidget(blk_card)
 
+        hist_card, hist_body = _tab_section("Candidate history")
         self.block_list = QTextEdit()
+        self.block_list.setObjectName("logPane")
         self.block_list.setReadOnly(True)
-        self.block_list.setMinimumHeight(100)
+        self.block_list.setMinimumHeight(120)
         self.block_list.setPlaceholderText("No block candidates yet (expected).")
         self.block_list.setFont(QFont("Cascadia Mono", 10))
-        bp.addWidget(self.block_list, 1)
-        tabs.addTab(block_tab, "Block")
+        hist_body.addWidget(self.block_list, 1)
+        bp.addWidget(hist_card, 1)
+        tabs.addTab(_tab_scroll(block_tab), "Block")
 
         # --- Shares ---
         share_tab = QWidget()
         sp = QVBoxLayout(share_tab)
-        sp.setContentsMargins(14, 12, 14, 12)
-        sp.setSpacing(8)
-        sht = QLabel("Shares (pool target — not a block reward)")
-        sht.setObjectName("tagline")
-        sht.setWordWrap(True)
-        sp.addWidget(sht)
-
-        share_detail = QFrame()
-        share_detail.setObjectName("shareDetail")
-        sg = QGridLayout(share_detail)
-        sg.setContentsMargins(10, 8, 10, 8)
-        sg.setHorizontalSpacing(12)
-        sg.setVerticalSpacing(6)
+        sp.setContentsMargins(16, 14, 16, 14)
+        sp.setSpacing(12)
+        sh_card, sh_body = _tab_section(
+            "Share summary",
+            hint="Pool target shares — not a block reward.",
+        )
         self.lbl_sh_count_k, self.lbl_sh_count = _stat_pair("Submitted")
         self.lbl_sh_acc_k, self.lbl_sh_acc = _stat_pair("Accepted / rejected")
         self.lbl_sh_nonce_k, self.lbl_sh_nonce = _stat_pair("Last nonce", mono=True)
         self.lbl_sh_status_k, self.lbl_sh_status = _stat_pair("Last status")
         self.lbl_sh_hash_k, self.lbl_sh_hash = _stat_pair("Last hash", mono=True)
-        sh_pairs = [
-            (self.lbl_sh_count_k, self.lbl_sh_count),
-            (self.lbl_sh_acc_k, self.lbl_sh_acc),
-            (self.lbl_sh_nonce_k, self.lbl_sh_nonce),
-            (self.lbl_sh_status_k, self.lbl_sh_status),
-        ]
-        for i, (k, v) in enumerate(sh_pairs):
-            r, c = divmod(i, 2)
-            sg.addWidget(k, r * 2, c * 2)
-            sg.addWidget(v, r * 2 + 1, c * 2, 1, 2)
-        sg.addWidget(self.lbl_sh_hash_k, 4, 0)
-        sg.addWidget(self.lbl_sh_hash, 5, 0, 1, 4)
+        sh_body.addLayout(
+            _stats_grid(
+                [
+                    (self.lbl_sh_count_k, self.lbl_sh_count),
+                    (self.lbl_sh_acc_k, self.lbl_sh_acc),
+                    (self.lbl_sh_nonce_k, self.lbl_sh_nonce),
+                    (self.lbl_sh_status_k, self.lbl_sh_status),
+                ]
+            )
+        )
+        sh_body.addWidget(_stat_cell(self.lbl_sh_hash_k, self.lbl_sh_hash))
         self.lbl_sh_hash.setMinimumHeight(36)
-        sp.addWidget(share_detail)
+        sp.addWidget(sh_card)
 
+        sh_hist, sh_hist_body = _tab_section("Share log")
         self.share_list = QTextEdit()
         self.share_list.setReadOnly(True)
-        self.share_list.setMinimumHeight(100)
+        self.share_list.setMinimumHeight(120)
         self.share_list.setPlaceholderText("No shares yet.")
         self.share_list.setFont(QFont("Cascadia Mono", 10))
-        sp.addWidget(self.share_list, 1)
-        tabs.addTab(share_tab, "Shares")
+        sh_hist_body.addWidget(self.share_list, 1)
+        sp.addWidget(sh_hist, 1)
+        tabs.addTab(_tab_scroll(share_tab), "Shares")
 
         # --- Event log ---
         log_tab = QWidget()
         lp = QVBoxLayout(log_tab)
-        lp.setContentsMargins(14, 12, 14, 12)
-        lp.setSpacing(8)
+        lp.setContentsMargins(16, 14, 16, 14)
+        lp.setSpacing(12)
+        log_card, log_body = _tab_section(
+            "Event log",
+            hint="Jobs, shares, block candidates, and pool replies.",
+        )
         self.event_log = QTextEdit()
         self.event_log.setReadOnly(True)
-        self.event_log.setMinimumHeight(160)
+        self.event_log.setMinimumHeight(220)
         self.event_log.setPlaceholderText(
-            "Jobs, shares, block candidates, and pool replies appear here."
+            "Activity appears here once mining starts."
         )
         self.event_log.setFont(QFont("Cascadia Mono", 10))
-        lp.addWidget(self.event_log, 1)
-        tabs.addTab(log_tab, "Event log")
+        log_body.addWidget(self.event_log, 1)
+        lp.addWidget(log_card, 1)
+        tabs.addTab(_tab_scroll(log_tab), "Event log")
 
         tabs.setCurrentIndex(0)  # Settings active by default
         layout.addWidget(tabs, 1)
+        from ui.wheel_guard import harden_wheel_widgets
+
+        harden_wheel_widgets(mine_page)
 
         foot = QLabel(f"Settings file: {settings_file()}")
         foot.setObjectName("statKey")
         foot.setWordWrap(True)
-        layout.addWidget(foot)
+        foot.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        layout.addWidget(foot, 0)
 
         self._addr_save_timer = QTimer(self)
         self._addr_save_timer.setSingleShot(True)
@@ -887,29 +1275,69 @@ class MainWindow(QMainWindow):
         )
 
     def _build_menu(self) -> None:
-        settings_menu = self.menuBar().addMenu("&Settings")
-        act_settings = QAction("Settings…", self)
-        act_settings.triggered.connect(self._open_settings)
-        settings_menu.addAction(act_settings)
-        act_wiz = QAction("Run setup wizard again…", self)
+        file_menu = self.menuBar().addMenu("&File")
+        act_wiz = QAction("Run Setup Wizard…", self)
         act_wiz.triggered.connect(self._rerun_setup_wizard)
-        settings_menu.addAction(act_wiz)
+        file_menu.addAction(act_wiz)
+        file_menu.addSeparator()
+        act_restart = QAction("Restart Mining Session", self)
+        act_restart.triggered.connect(self._restart_mining_session)
+        file_menu.addAction(act_restart)
+        act_logs = QAction("View Logs…", self)
+        act_logs.triggered.connect(self._view_event_logs)
+        file_menu.addAction(act_logs)
+        file_menu.addSeparator()
+        act_exit = QAction("E&xit", self)
+        act_exit.triggered.connect(self._quit_from_menu)
+        file_menu.addAction(act_exit)
+
+        settings_menu = self.menuBar().addMenu("&Settings")
+        act_mining = QAction("Mining Settings…", self)
+        act_mining.triggered.connect(lambda: self._open_settings(focus="mining"))
+        settings_menu.addAction(act_mining)
+        act_idle = QAction("Idle Mode Settings…", self)
+        act_idle.triggered.connect(lambda: self._open_settings(focus="idle"))
+        settings_menu.addAction(act_idle)
+        act_hw = QAction("Hardware & Temperature…", self)
+        act_hw.triggered.connect(lambda: self._open_settings(focus="hardware"))
+        settings_menu.addAction(act_hw)
+        act_conn = QAction("Connection Settings…", self)
+        act_conn.triggered.connect(self._open_connection_settings)
+        settings_menu.addAction(act_conn)
+        settings_menu.addSeparator()
+        act_reset = QAction("Reset Settings…", self)
+        act_reset.triggered.connect(self._reset_settings)
+        settings_menu.addAction(act_reset)
+
+        tools_menu = self.menuBar().addMenu("&Tools")
+        act_bench = QAction("Benchmark…", self)
+        act_bench.triggered.connect(self._run_benchmark)
+        tools_menu.addAction(act_bench)
+        act_diag = QAction("Mining Diagnostics…", self)
+        act_diag.triggered.connect(self._show_mining_diagnostics)
+        tools_menu.addAction(act_diag)
 
         help_menu = self.menuBar().addMenu("&Help")
         act_how = QAction("How to Use…", self)
         act_how.triggered.connect(self._show_howto)
         help_menu.addAction(act_how)
-        act_fb = QAction("Feedback / Suggestions…", self)
-        act_fb.triggered.connect(self._show_feedback)
-        help_menu.addAction(act_fb)
         act_upd = QAction("Check for Updates…", self)
         act_upd.triggered.connect(lambda: self._check_for_updates(manual=True))
         help_menu.addAction(act_upd)
-
-        # Top-level Quit next to Help — full exit (not tray hide)
-        act_quit_menu = QAction("&Quit", self)
-        act_quit_menu.triggered.connect(self._quit_from_menu)
-        self.menuBar().addAction(act_quit_menu)
+        help_menu.addSeparator()
+        act_issue = QAction("Report an Issue…", self)
+        act_issue.triggered.connect(self._report_issue)
+        help_menu.addAction(act_issue)
+        act_fb = QAction("Feedback & Suggestions…", self)
+        act_fb.triggered.connect(self._show_feedback)
+        help_menu.addAction(act_fb)
+        act_gh = QAction("GitHub Repository", self)
+        act_gh.triggered.connect(self._open_github)
+        help_menu.addAction(act_gh)
+        help_menu.addSeparator()
+        act_about = QAction(f"About {APP_SHORT}…", self)
+        act_about.triggered.connect(self._show_about)
+        help_menu.addAction(act_about)
 
     def _show_howto(self) -> None:
         from ui.howto_dialog import HowToUseDialog
@@ -920,6 +1348,164 @@ class MainWindow(QMainWindow):
         from ui.feedback_dialog import FeedbackDialog
 
         FeedbackDialog(self).exec()
+
+    def _show_about(self) -> None:
+        from ui.about_dialog import AboutDialog
+
+        AboutDialog(self).exec()
+
+    def _open_github(self) -> None:
+        from app_meta import GITHUB_URL
+
+        QDesktopServices.openUrl(QUrl(GITHUB_URL))
+
+    def _report_issue(self) -> None:
+        from app_meta import GITHUB_ISSUES_URL
+
+        QDesktopServices.openUrl(QUrl(GITHUB_ISSUES_URL))
+
+    def _show_mining_page(self) -> None:
+        if getattr(self, "_stack", None) is not None and hasattr(self, "_mine_scroll"):
+            self._stack.setCurrentWidget(self._mine_scroll)
+
+    def _view_event_logs(self) -> None:
+        if hasattr(self, "_mine_tabs") and hasattr(self, "event_log"):
+            self._show_mining_page()
+            idx = -1
+            for i in range(self._mine_tabs.count()):
+                if self._mine_tabs.tabText(i).lower().startswith("event"):
+                    idx = i
+                    break
+            if idx >= 0:
+                self._mine_tabs.setCurrentIndex(idx)
+            self.event_log.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _open_connection_settings(self) -> None:
+        if hasattr(self, "_mine_tabs"):
+            self._show_mining_page()
+            idx = -1
+            for i in range(self._mine_tabs.count()):
+                if "pool" in self._mine_tabs.tabText(i).lower():
+                    idx = i
+                    break
+            if idx >= 0:
+                self._mine_tabs.setCurrentIndex(idx)
+
+    def _restart_mining_session(self) -> None:
+        from worker.idle_session import IdleSessionState
+
+        if not self.controller.is_running():
+            QMessageBox.information(
+                self,
+                "Restart Mining Session",
+                "No mining session is running. Use Start or Start Idle Mode first.",
+            )
+            return
+        was_idle = self._idle_state != IdleSessionState.STOPPED
+        reply = QMessageBox.question(
+            self,
+            "Restart Mining Session",
+            "Stop the current session and start again with the same mode?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if self._stop_busy:
+            return
+        self._on_stop()
+
+        def _wait_then_restart() -> None:
+            if self._stop_busy or self.controller.is_running():
+                QTimer.singleShot(200, _wait_then_restart)
+                return
+            if was_idle:
+                self._on_start_idle()
+            else:
+                self._on_start()
+
+        QTimer.singleShot(300, _wait_then_restart)
+
+    def _reset_settings(self) -> None:
+        from ui.settings_store import DEFAULTS, save_settings
+
+        reply = QMessageBox.question(
+            self,
+            "Reset Settings",
+            "Reset machine settings (intensity, thermal, Idle Mode, CPU threads) "
+            "to defaults?\n\nPayout addresses and selected network are kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        keys = (
+            "intensity",
+            "pause_temp",
+            "resume_temp",
+            "cpu_thread_limit",
+            "pause_on_battery",
+            "allow_mine_without_temp",
+            "idle_timeout_s",
+            "idle_active_pct",
+            "idle_idle_pct",
+            "idle_settings_configured",
+            "auto_idle_mining",
+            "xmrig_donate_level",
+            "scoreboard_overlay_enabled",
+            "gpu_bus_id",
+            "gpu_uuid",
+        )
+        updates = {k: DEFAULTS[k] for k in keys if k in DEFAULTS}
+        updates["gpu_bus_id"] = None
+        updates["gpu_uuid"] = None
+        updates["idle_settings_configured"] = False
+        save_settings(updates)
+        self._cfg = load_settings()
+        self._push_settings()
+        QMessageBox.information(self, "Reset Settings", "Machine settings restored to defaults.")
+
+    def _run_benchmark(self) -> None:
+        """Hardware capacity probe (OpenCL / VRAM gates) — useful diagnostics."""
+        if self.controller.is_running():
+            QMessageBox.warning(
+                self,
+                "Benchmark",
+                "Stop mining before running the hardware capacity benchmark.",
+            )
+            return
+        reply = QMessageBox.question(
+            self,
+            "Benchmark",
+            "Run a hardware capacity check (OpenCL / NVIDIA VRAM gates for "
+            "supported networks)?\n\nThis does not measure sustained hashrate.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._on_open_hardware_check()
+
+    def _show_mining_diagnostics(self) -> None:
+        from monitor.user_activity import idle_seconds
+        from ui.diagnostics_dialog import (
+            MiningDiagnosticsDialog,
+            build_diagnostics_text,
+        )
+        from worker.idle_session import IdleSessionState
+
+        text = build_diagnostics_text(
+            cfg=self._cfg,
+            network_id=self._network_id,
+            profile_name=self._profile.display_name,
+            engine_kind=self._profile.engine_kind,
+            stats=self.controller.stats,
+            idle_state=str(
+                getattr(self, "_idle_state", IdleSessionState.STOPPED)
+            ),
+            idle_s=idle_seconds(),
+        )
+        MiningDiagnosticsDialog(text, self).exec()
 
     def _load_capacity_blocks(self) -> dict[str, str]:
         """Restore last successful hardware capacity probe from settings."""
@@ -955,16 +1541,66 @@ class MainWindow(QMainWindow):
                 out[nid] = reason
         return out
 
+    def _idle_session_active(self) -> bool:
+        from worker.idle_session import IdleSessionState
+
+        return getattr(self, "_idle_state", IdleSessionState.STOPPED) != IdleSessionState.STOPPED
+
     def _apply_idle_mining_ui(self) -> None:
-        """Reset mining-page controls to idle (no auto-start)."""
-        self.start_btn.setEnabled(bool(self._profile.mining_ready))
-        self.stop_btn.setEnabled(False)
-        self.address_edit.setEnabled(True)
-        self.test_mode.setEnabled(True)
-        self.btn_change_network.setEnabled(True)
+        """Reset mining-page controls (no auto-start)."""
+        from worker.idle_session import IdleSessionState
+
+        self._idle_state = IdleSessionState.STOPPED
+        self._idle_launching = False
+        self._set_session_controls_locked(False)
         self.lbl_conn.setText("Not connected")
-        self.lbl_status.setText("Ready — choose Start after selecting a network.")
+        self.lbl_status.setText(
+            "Ready — Start for immediate mining, or Start Idle Mode for idle mining."
+        )
         self.lbl_rate.setText("0 H/s")
+        self._set_activity_ui_waiting("")
+
+    def _set_session_controls_locked(self, locked: bool) -> None:
+        """Same lock pattern as Start: freeze address/network; only Stop remains."""
+        ready = bool(self._profile.mining_ready)
+        blocked = bool(network_block_reason(self._network_id, probe_gpu=False))
+        can_start = (
+            ready
+            and not blocked
+            and not locked
+            and not self.controller.is_running()
+            and not self._idle_session_active()
+        )
+        self.start_btn.setEnabled(can_start)
+        self.idle_start_btn.setEnabled(can_start)
+        self.stop_btn.setEnabled(
+            bool(locked) or self.controller.is_running() or self._idle_session_active()
+        )
+        self.address_edit.setEnabled(not locked)
+        self.test_mode.setEnabled(not locked)
+        self.btn_change_network.setEnabled(not locked)
+
+    def _set_activity_ui_waiting(self, text: str) -> None:
+        if hasattr(self, "lbl_activity"):
+            self.lbl_activity.setText(text or "—")
+
+    def _idle_active_pct_val(self) -> int:
+        raw = self._cfg.get("idle_active_pct")
+        if raw is None:
+            return 10
+        try:
+            return max(0, min(100, int(raw)))
+        except (TypeError, ValueError):
+            return 10
+
+    def _idle_idle_pct_val(self) -> int:
+        raw = self._cfg.get("idle_idle_pct")
+        if raw is None:
+            return 80
+        try:
+            return max(0, min(100, int(raw)))
+        except (TypeError, ValueError):
+            return 80
 
     def _ensure_idle_on_launch(self) -> None:
         """Never resume mining after restart; clear leftover external miners."""
@@ -1211,6 +1847,34 @@ class MainWindow(QMainWindow):
             else:
                 _after_stop(True)
 
+    def _set_chip(self, chip: QLabel, text: str, *, on: bool) -> None:
+        chip.setText(text)
+        chip.setObjectName("statusChipOn" if on else "statusChip")
+        chip.style().unpolish(chip)
+        chip.style().polish(chip)
+
+    def _refresh_header_chips(
+        self, *, connected: bool | None = None, conn_txt: str | None = None
+    ) -> None:
+        if not hasattr(self, "chip_conn"):
+            return
+        from worker.idle_session import IdleSessionState
+
+        if conn_txt is None:
+            conn_txt = self.chip_conn.text() or "Not connected"
+        if connected is None:
+            connected = conn_txt.lower().startswith("connected") or "test" in conn_txt.lower()
+        self._set_chip(self.chip_conn, conn_txt, on=bool(connected))
+        idle_on = (
+            getattr(self, "_idle_state", IdleSessionState.STOPPED)
+            != IdleSessionState.STOPPED
+        )
+        self._set_chip(
+            self.chip_idle,
+            "Idle Mode on" if idle_on else "Idle Mode off",
+            on=idle_on,
+        )
+
     def _apply_network_to_ui(self) -> None:
         self._profile = get_profile(self._network_id)
         self.setWindowTitle(f"{APP_NAME} — {self._profile.display_name}")
@@ -1222,6 +1886,28 @@ class MainWindow(QMainWindow):
             f"Network: {self._profile.display_name}  ·  {self._profile.algorithm}  ·  "
             f"{ep.host}:{ep.port}  ·  {kind}"
         )
+        if hasattr(self, "lbl_sum_network"):
+            self.lbl_sum_network.setText(self._profile.display_name)
+            self.lbl_sum_algo.setText(self._profile.algorithm)
+            self.lbl_sum_pool.setText(f"{ep.host}:{ep.port}")
+            self.lbl_sum_mode.setText(kind)
+            eng = self._profile.hardware_hint
+            if self._profile.engine_kind == "native_sha256d":
+                eng_detail = "native engine"
+            elif self._network_id == "xmr":
+                eng_detail = "XMRig"
+            else:
+                eng_detail = "managed external"
+            self.lbl_sum_engine.setText(
+                f"Engine: {eng} · {eng_detail} · {self._profile.pool_fee_note}"
+            )
+            mode_label = (
+                "Solo mining"
+                if kind == "SOLO"
+                else ("Shared pool" if kind == "SHARED" else f"{kind} mining")
+            )
+            self._set_chip(self.chip_mode, mode_label, on=(kind == "SOLO"))
+        self._refresh_header_chips()
         if hasattr(self, "pool_panel"):
             self.pool_panel.load_network(
                 self._network_id, self._cfg.get("pool_by_network") or {}
@@ -1238,26 +1924,34 @@ class MainWindow(QMainWindow):
         ready = self._profile.mining_ready
         # No heavy OpenCL at startup; probe_gpu=True before Start
         blocked = network_block_reason(self._network_id, probe_gpu=False)
-        self.start_btn.setEnabled(
-            ready and not blocked and not self.controller.is_running()
-        )
+        if not self._idle_session_active() and not self.controller.is_running():
+            self._set_session_controls_locked(False)
+        elif self.controller.is_running() or self._idle_session_active():
+            self._set_session_controls_locked(True)
         is_xmr = self._network_id == "xmr"
         is_managed = self._profile.engine_kind == "managed_external"
-        # Native OpenCL counter not on XMR/RVN/ERG — avoid misleading label
-        if is_managed:
-            self.lbl_total_k.setText("Session attempts")
+        self.lbl_total_k.setText("Session attempts")
+        self.lbl_lifetime_k.setText("Lifetime attempts")
+        from mining.lifetime_stats import get_lifetime_attempts
+
+        if is_xmr:
+            # XMRig results.hashes_total → session/lifetime attempts
+            self.lbl_total.setText("0")
+            self.lbl_lifetime.setText(
+                f"{get_lifetime_attempts(self._network_id):,}"
+            )
+            self.lbl_work.setText(
+                "XMRig: attempts from API hashes_total (includes donate window)."
+            )
+        elif is_managed:
+            # Rigel has no reliable cumulative hash counter yet
             self.lbl_total.setText("— (external engine)")
-            self.lbl_lifetime_k.setText("Lifetime attempts")
             self.lbl_lifetime.setText("—")
             self.lbl_work.setText(
                 "External engine: see hash rate and share rows "
-                "(OpenCL session attempts only on BTC/BCH)."
+                "(attempt counters: XMRig yes, Rigel not yet)."
             )
         else:
-            self.lbl_total_k.setText("Session attempts")
-            self.lbl_lifetime_k.setText("Lifetime attempts")
-            from mining.lifetime_stats import get_lifetime_attempts
-
             self.lbl_lifetime.setText(
                 f"{get_lifetime_attempts(self._network_id):,}"
             )
@@ -1270,46 +1964,11 @@ class MainWindow(QMainWindow):
         self._refresh_addr_hint()
         if is_xmr:
             self.lbl_job_k.setText("Current work (height/diff)")
-            self.btn_stats.setText("Open rewards page")
-            self.lbl_stats_hint.setText(
-                "Open the Kryptex page for rewards (accepted = share, not a block). "
-                "Work row shows height/diff from XMRig; no stratum job_id."
-            )
         elif self._network_id == "bch":
             self.lbl_job_k.setText("Current job ID")
-            self.btn_stats.setText("Open account page")
-            self.lbl_stats_hint.setText(
-                "2Miners home page does not list you; you need /account/bitcoincash:…. "
-                "Without a first accepted share the site shows /search (mindiff ~32K — can take a while on GPU)."
-            )
         else:
             self.lbl_job_k.setText("Current job ID")
-            self.btn_stats.setText("Open pool page")
-            self.lbl_stats_hint.setText(
-                "Server stats may lag; with low hash rate / high mindiff they "
-                "may not show up immediately."
-            )
-        preview = self._profile.stats_url_for(self.address_edit.text().strip())
-        if preview:
-            if is_xmr:
-                self.lbl_stats_url.setText(
-                    f"Rewards / account (Kryptex; accepted≠block): {preview}"
-                )
-            else:
-                self.lbl_stats_url.setText(f"Stats: {preview}")
-            self.btn_stats.setEnabled(True)
-            self._stats_url = preview
-        else:
-            if is_xmr:
-                self.lbl_stats_url.setText(
-                    "Rewards / account: Kryptex link enables when you enter an XMR address"
-                )
-            else:
-                self.lbl_stats_url.setText(
-                    "Stats: enabled when address is set / network supports it"
-                )
-            self.btn_stats.setEnabled(False)
-            self._stats_url = ""
+        self._refresh_stats_link_ui()
 
     def _on_network_chosen(self, network_id: str) -> None:
         """Continue → show circle spinner, clear orphans in background, then mining UI."""
@@ -1506,11 +2165,38 @@ class MainWindow(QMainWindow):
     def _on_donate(self) -> None:
         DonateDialog(self).exec()
 
+    def _clamp_window_to_screen(
+        self, *, preferred_w: int | None = None, preferred_h: int | None = None
+    ) -> None:
+        """Cap size to the available desktop (taskbar excluded)."""
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            if preferred_w is not None and preferred_h is not None:
+                self.resize(preferred_w, preferred_h)
+            return
+        avail = screen.availableGeometry()
+        max_w = max(self.minimumWidth(), avail.width())
+        max_h = max(self.minimumHeight(), avail.height())
+        self.setMaximumSize(max_w, max_h)
+        w = preferred_w if preferred_w is not None else self.width()
+        h = preferred_h if preferred_h is not None else self.height()
+        self.resize(min(max(self.minimumWidth(), w), max_w), min(max(self.minimumHeight(), h), max_h))
+
+    def _current_tab_scroll(self) -> QScrollArea | None:
+        if not hasattr(self, "_mine_tabs"):
+            return None
+        w = self._mine_tabs.currentWidget()
+        return w if isinstance(w, QScrollArea) else None
+
     @contextmanager
     def _hold_mine_scroll(self) -> Iterator[None]:
-        """Keep QScrollArea viewport still while focus/enable changes (Start/Stop)."""
-        bar = self._mine_scroll.verticalScrollBar()
-        hbar = self._mine_scroll.horizontalScrollBar()
+        """Keep the active tab scroll still while focus/enable changes (Start/Stop)."""
+        sa = self._current_tab_scroll()
+        if sa is None:
+            yield
+            return
+        bar = sa.verticalScrollBar()
+        hbar = sa.horizontalScrollBar()
         vpos, hpos = bar.value(), hbar.value()
 
         def _restore() -> None:
@@ -1527,6 +2213,101 @@ class MainWindow(QMainWindow):
         save_settings({"pool_by_network": pool_by_network})
         self._cfg = load_settings()
         self._refresh_pool_banner()
+        if not self.controller.is_running():
+            self._refresh_stats_link_ui()
+
+    def _current_pool_stats_url(self, address: str | None = None) -> str:
+        from networks.pool_resolve import resolve_pool, stats_url_for_endpoint
+
+        addr = (
+            self.address_edit.text().strip()
+            if address is None
+            else (address or "").strip()
+        )
+        ep = resolve_pool(self._network_id, self._cfg.get("pool_by_network") or {})
+        return stats_url_for_endpoint(ep, addr)
+
+    def _stats_link_caption(self, url: str) -> str:
+        low = (url or "").lower()
+        if "kryptex.com" in low:
+            return f"Rewards / account (Kryptex; accepted≠block): {url}"
+        if "2miners.com" in low:
+            return f"Account page (2Miners; accepted≠block): {url}"
+        if "ckpool.org" in low:
+            return f"Pool stats (CKPool): {url}"
+        return f"Pool rewards / stats: {url}"
+
+    def _refresh_stats_link_ui(self, url: str | None = None) -> None:
+        """Bind Status rewards button to the *selected* pool; hide when unknown."""
+        from networks.pool_resolve import resolve_pool
+
+        preview = url if url is not None else self._current_pool_stats_url()
+        ep = resolve_pool(self._network_id, self._cfg.get("pool_by_network") or {})
+        is_xmr = self._network_id == "xmr"
+        if preview:
+            self.lbl_stats_url.setText(self._stats_link_caption(preview))
+            if is_xmr or "kryptex.com" in preview.lower() or "2miners.com" in preview.lower():
+                self.btn_stats.setText("Open rewards page")
+            else:
+                self.btn_stats.setText("Open pool page")
+            self.btn_stats.setEnabled(True)
+            self._stats_url = preview
+        else:
+            if ep.mode == "custom":
+                self.lbl_stats_url.setText(
+                    "No rewards/account page for this custom pool — "
+                    "check the pool website manually (accepted ≠ block)."
+                )
+            elif not self.address_edit.text().strip():
+                self.lbl_stats_url.setText(
+                    "Rewards / account: enter a wallet address when this pool provides a stats page."
+                )
+            else:
+                self.lbl_stats_url.setText(
+                    "No rewards/account page configured for the selected pool."
+                )
+            self.btn_stats.setText("Open pool page")
+            self.btn_stats.setEnabled(False)
+            self._stats_url = ""
+
+        if is_xmr:
+            if preview and "kryptex.com" in preview.lower():
+                self.lbl_stats_hint.setText(
+                    "Open the Kryptex rewards page (accepted = share, not a block). "
+                    "Work row shows height/diff from XMRig; no stratum job_id."
+                )
+            elif preview:
+                self.lbl_stats_hint.setText(
+                    "Open this pool’s rewards/account page (accepted = share, not a block). "
+                    "Work row shows height/diff from XMRig; no stratum job_id."
+                )
+            else:
+                self.lbl_stats_hint.setText(
+                    "This pool has no in-app rewards link. Check the pool site manually "
+                    "(accepted = share, not a block). Work row shows height/diff from XMRig."
+                )
+        elif self._network_id == "bch":
+            self.btn_stats.setText(
+                "Open account page" if preview else "Open pool page"
+            )
+            self.lbl_stats_hint.setText(
+                "2Miners home page does not list you; you need /account/bitcoincash:…. "
+                "Without a first accepted share the site shows /search (mindiff ~32K — can take a while on GPU)."
+                if preview and "2miners.com" in preview.lower()
+                else (
+                    "Use the pool account/stats page when available. "
+                    "Accepted shares are not block rewards."
+                )
+            )
+        else:
+            self.lbl_stats_hint.setText(
+                "Server stats may lag; with low hash rate / high mindiff they "
+                "may not show up immediately."
+                if preview
+                else "No pool stats page for this selection — check the pool website if needed."
+            )
+        hint = (self.lbl_stats_hint.text() or "").strip()
+        self.lbl_stats_hint.setVisible(bool(hint))
 
     def _refresh_pool_banner(self) -> None:
         from networks.pool_resolve import resolve_pool
@@ -1559,8 +2340,8 @@ class MainWindow(QMainWindow):
                 "address": addr,
                 "address_by_network": by_net,
                 "intensity": int(self._cfg.get("intensity") or 4),
-                "pause_temp": int(self._cfg.get("pause_temp") or 65),
-                "resume_temp": int(self._cfg.get("resume_temp") or 55),
+                "pause_temp": int(self._cfg.get("pause_temp") or 75),
+                "resume_temp": int(self._cfg.get("resume_temp") or 60),
                 "test_mode": self.test_mode.isChecked(),
                 "cpu_thread_limit": int(self._cfg.get("cpu_thread_limit") or 0),
                 "pause_on_battery": bool(self._cfg.get("pause_on_battery", True)),
@@ -1583,27 +2364,17 @@ class MainWindow(QMainWindow):
         )
         self._cfg = load_settings()
         self._refresh_addr_hint()
-        # Stats / rewards page preview
-        preview = self._profile.stats_url_for(addr)
-        if preview and not self.controller.is_running():
-            if self._network_id == "xmr":
-                self.lbl_stats_url.setText(
-                    f"Rewards / account (Kryptex; accepted≠block): {preview}"
-                )
-                self.btn_stats.setText("Open rewards page")
-            else:
-                self.lbl_stats_url.setText(f"Stats: {preview}")
-                self.btn_stats.setText("Open pool page")
-            self.btn_stats.setEnabled(True)
-            self._stats_url = preview
+        if not self.controller.is_running():
+            self._refresh_stats_link_ui()
+
     def _intensity_val(self) -> int:
         return int(self._cfg.get("intensity") or 4)
 
     def _pause_temp_val(self) -> int:
-        return int(self._cfg.get("pause_temp") or 65)
+        return int(self._cfg.get("pause_temp") or 75)
 
     def _resume_temp_val(self) -> int:
-        return int(self._cfg.get("resume_temp") or 55)
+        return int(self._cfg.get("resume_temp") or 60)
 
     def _cpu_threads_val(self) -> int:
         return int(self._cfg.get("cpu_thread_limit") or 0)
@@ -1614,16 +2385,30 @@ class MainWindow(QMainWindow):
     def _push_settings(self) -> None:
         import time as _time
 
+        from worker.idle_session import (
+            IdleSessionState,
+            promote_after_miner_start,
+            should_enable_idle_policy,
+        )
+
         now = _time.time()
         last = getattr(self, "_idle_wall_watch", None)
         self._idle_wall_watch = now
+        state = getattr(self, "_idle_state", IdleSessionState.STOPPED)
+        running = self.controller.is_running()
+        # Recover WAITING→MINING_IDLE if miner already up (state/policy race).
+        if state == IdleSessionState.WAITING_FOR_IDLE and running:
+            from monitor.user_activity import idle_seconds
+
+            self._idle_state = promote_after_miner_start(
+                state,
+                idle_s=idle_seconds(),
+                timeout_s=int(self._cfg.get("idle_timeout_s") or 150),
+            )
+            state = self._idle_state
+        policy_on = should_enable_idle_policy(state, miner_running=running)
         # Sleep/hibernate: wall clock jumped while our 1s timer was suspended.
-        if (
-            last is not None
-            and (now - last) >= 5.0
-            and bool(self._cfg.get("auto_idle_mining", False))
-            and self.controller.is_running()
-        ):
+        if last is not None and (now - last) >= 5.0 and policy_on and running:
             self.controller.force_idle_active()
 
         self.controller.update_settings(
@@ -1631,20 +2416,14 @@ class MainWindow(QMainWindow):
             self._pause_temp_val(),
             self._resume_temp_val(),
         )
+        # WAITING (no miner): policy off. After miner start: policy on so ACTIVE pauses/scales.
         self.controller.update_idle_options(
-            enabled=bool(self._cfg.get("auto_idle_mining", False)),
+            enabled=policy_on,
             timeout_s=int(self._cfg.get("idle_timeout_s") or 150),
-            active_pct=int(
-                self._cfg.get("idle_active_pct")
-                if self._cfg.get("idle_active_pct") is not None
-                else 10
-            ),
-            idle_pct=int(
-                self._cfg.get("idle_idle_pct")
-                if self._cfg.get("idle_idle_pct") is not None
-                else 100
-            ),
+            active_pct=self._idle_active_pct_val(),
+            idle_pct=self._idle_idle_pct_val(),
         )
+        self._tick_idle_session()
 
     def _allow_mine_without_temp(self) -> bool:
         return bool(self._cfg.get("allow_mine_without_temp", False))
@@ -1834,6 +2613,10 @@ class MainWindow(QMainWindow):
 
     def _on_start(self) -> None:
         try:
+            from worker.idle_session import IdleSessionState
+
+            self._idle_state = IdleSessionState.STOPPED
+            self._idle_launching = False
             self._on_start_inner()
         except Exception as exc:
             import traceback
@@ -1845,13 +2628,149 @@ class MainWindow(QMainWindow):
                 f"Start failed unexpectedly:\n\n{exc}",
             )
 
-    def _on_start_inner(self) -> None:
+    def _idle_settings_ready(self) -> bool:
+        return bool(self._cfg.get("idle_settings_configured", False)) or bool(
+            self._cfg.get("auto_idle_mining", False)
+        )
+
+    def _on_start_idle(self) -> None:
+        """
+        STOPPED → mining now at While-using-PC intensity (not a silent wait).
+        After AFK timeout → While-AFK intensity; input → Using-PC intensity again.
+        """
+        from monitor.user_activity import idle_seconds
+        from worker.idle_session import (
+            IdleSessionState,
+            initial_mining_state_from_activity,
+        )
+
+        if not self._idle_settings_ready():
+            QMessageBox.warning(
+                self,
+                "Idle Mode settings required",
+                "Configure Idle Mode under Settings first (AFK timeout and "
+                "While-using-PC / While-AFK intensity), then save. "
+                "The session will not start until settings are saved.",
+            )
+            self._open_settings(focus_idle=True)
+            return
+        if not self._preflight_can_mine():
+            return
         self._persist_form()
-        self._push_settings()
+        timeout = int(self._cfg.get("idle_timeout_s") or 150)
+        active_pct = self._idle_active_pct_val()
+        idle_pct = self._idle_idle_pct_val()
+        # Target state from current activity; mining starts immediately.
+        self._idle_state = initial_mining_state_from_activity(
+            idle_s=idle_seconds(), timeout_s=timeout
+        )
+        self._idle_launching = False
+        self.controller.update_idle_options(
+            enabled=True,
+            timeout_s=timeout,
+            active_pct=active_pct,
+            idle_pct=idle_pct,
+            arm_session=True,
+        )
+        self._idle_state = IdleSessionState.MINING_ACTIVE
+        with self._hold_mine_scroll():
+            self.stop_btn.setEnabled(True)
+            self.idle_start_btn.clearFocus()
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._set_session_controls_locked(True)
+        self.lbl_status.setText(
+            f"Idle Mode — starting at While-using-PC intensity ({active_pct}%)."
+        )
+        self._set_activity_ui_waiting("Using PC · starting")
+        self._refresh_header_chips()
+        self._launch_idle_mining()
+
+    def _tick_idle_session(self) -> None:
+        """Sync MINING_IDLE ↔ MINING_ACTIVE from policy while Start Idle runs."""
+        from worker.idle_session import (
+            IdleSessionState,
+            mining_state_from_policy_mode,
+            promote_after_miner_start,
+        )
+
+        state = getattr(self, "_idle_state", IdleSessionState.STOPPED)
+        if state == IdleSessionState.STOPPED:
+            return
+
+        timeout = int(self._cfg.get("idle_timeout_s") or 150)
+
+        if state == IdleSessionState.WAITING_FOR_IDLE and self.controller.is_running():
+            from monitor.user_activity import idle_seconds
+
+            self._idle_state = promote_after_miner_start(
+                state, idle_s=idle_seconds(), timeout_s=timeout
+            )
+            self.controller.update_idle_options(
+                enabled=True,
+                timeout_s=timeout,
+                active_pct=self._idle_active_pct_val(),
+                idle_pct=self._idle_idle_pct_val(),
+            )
+            return
+
+        if state in (IdleSessionState.MINING_IDLE, IdleSessionState.MINING_ACTIVE):
+            if not self.controller.is_running():
+                return
+            mode = str(getattr(self.controller.stats, "activity_mode", "") or "")
+            if mode in ("idle", "active"):
+                self._idle_state = mining_state_from_policy_mode(mode)
+
+    def _launch_idle_mining(self) -> None:
+        """Start miner for Start Idle (Using-PC intensity from the first moment)."""
+        from worker.idle_session import IdleSessionState
+
+        if self._idle_state == IdleSessionState.STOPPED:
+            return
+        if self._idle_launching or self.controller.is_running():
+            return
+
+        def _launch() -> None:
+            try:
+                if self._idle_state == IdleSessionState.STOPPED:
+                    return
+                if not self._preflight_can_mine():
+                    self._stop_idle_session_to_stopped()
+                    return
+                timeout = int(self._cfg.get("idle_timeout_s") or 150)
+                self.controller.update_idle_options(
+                    enabled=True,
+                    timeout_s=timeout,
+                    active_pct=self._idle_active_pct_val(),
+                    idle_pct=self._idle_idle_pct_val(),
+                    arm_session=True,
+                )
+                self._begin_mining_after_gates()
+                self._idle_state = IdleSessionState.MINING_ACTIVE
+                self.controller.update_idle_options(
+                    enabled=True,
+                    timeout_s=timeout,
+                    active_pct=self._idle_active_pct_val(),
+                    idle_pct=self._idle_idle_pct_val(),
+                    arm_session=True,
+                )
+            finally:
+                self._idle_launching = False
+
+        self._idle_launching = True
+        if self._ensure_external_miner_ready(on_ready=_launch):
+            _launch()
+            return
+        dl = getattr(self, "_miner_dl_worker", None)
+        if dl is None or not dl.isRunning():
+            self._idle_launching = False
+            self._stop_idle_session_to_stopped()
+            self.lbl_status.setText("Idle Mode — miner not ready.")
+
+    def _preflight_can_mine(self) -> bool:
         blocked = network_block_reason(self._network_id, probe_gpu=True)
         if blocked:
             QMessageBox.warning(self, "Hardware / dependency", blocked)
-            return
+            return False
         if not self._profile.mining_ready:
             QMessageBox.information(
                 self,
@@ -1859,7 +2778,7 @@ class MainWindow(QMainWindow):
                 f"{self._profile.display_name} mining engine is not connected yet.\n"
                 f"{self._profile.notes}",
             )
-            return
+            return False
         if self._profile.engine_kind == "managed_external" and self._network_id not in (
             "xmr",
             "rvn",
@@ -1870,11 +2789,18 @@ class MainWindow(QMainWindow):
                 "Managed engine",
                 f"{self._profile.display_name} will connect in a later release.",
             )
-            return
+            return False
         if self._stop_busy:
             QMessageBox.information(
                 self, "Stopping", "Cannot start a new session until stop finishes."
             )
+            return False
+        return True
+
+    def _on_start_inner(self) -> None:
+        self._persist_form()
+        self._push_settings()
+        if not self._preflight_can_mine():
             return
 
         if not self._ensure_external_miner_ready(on_ready=self._begin_mining_after_gates):
@@ -1884,6 +2810,8 @@ class MainWindow(QMainWindow):
 
     def _begin_mining_after_gates(self) -> None:
         """Thermal gate + controller.start (after miner is ready)."""
+        from worker.idle_session import IdleSessionState
+
         self._defender_help_shown = False
 
         from monitor.thermal_probe import probe_temperature_readable
@@ -1896,6 +2824,13 @@ class MainWindow(QMainWindow):
         )
         if not temp_ok and not allow_no_temp:
             if not self._confirm_mine_without_temp(temp_detail):
+                if (
+                    self._idle_state == IdleSessionState.WAITING_FOR_IDLE
+                    and not self.controller.is_running()
+                ):
+                    self.lbl_status.setText(
+                        "Waiting for system idle... (thermal gate blocked — still monitoring)"
+                    )
                 return
             allow_no_temp = True
         if not temp_ok:
@@ -1909,6 +2844,21 @@ class MainWindow(QMainWindow):
             )
             self.controller.gpu_bus_id = str(self._cfg.get("gpu_bus_id") or "")
             self.controller.gpu_uuid = str(self._cfg.get("gpu_uuid") or "")
+            from worker.idle_session import (
+                IdleSessionState,
+                should_enable_idle_policy,
+            )
+
+            # Enable policy once this Start Idle session is about to mine.
+            arm_idle = self._idle_state != IdleSessionState.STOPPED
+            to = int(self._cfg.get("idle_timeout_s") or 150)
+            self.controller.update_idle_options(
+                enabled=arm_idle,
+                timeout_s=to,
+                active_pct=self._idle_active_pct_val(),
+                idle_pct=self._idle_idle_pct_val(),
+                arm_session=arm_idle,
+            )
             self.controller.start(
                 self.address_edit.text(),
                 test_mode=self.test_mode.isChecked(),
@@ -1916,6 +2866,19 @@ class MainWindow(QMainWindow):
                 allow_mine_without_temp=allow_no_temp,
                 pool_by_network=self._cfg.get("pool_by_network") or {},
             )
+            if arm_idle:
+                # Keep Using-PC intensity at session start (do not jump to AFK %).
+                self._idle_state = IdleSessionState.MINING_ACTIVE
+                if should_enable_idle_policy(
+                    self._idle_state, miner_running=True
+                ):
+                    self.controller.update_idle_options(
+                        enabled=True,
+                        timeout_s=to,
+                        active_pct=self._idle_active_pct_val(),
+                        idle_pct=self._idle_idle_pct_val(),
+                        arm_session=True,
+                    )
         except Exception as exc:
             from engines.windows_security import looks_like_defender_block
             from ui.defender_help_dialog import show_defender_help
@@ -1927,16 +2890,25 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Could not start", str(exc))
             return
         with self._hold_mine_scroll():
-            # Enable Stop first so focus does not jump past it into Status (scrolls down).
             self.stop_btn.setEnabled(True)
             self.start_btn.clearFocus()
+            self.idle_start_btn.clearFocus()
             self.setFocus(Qt.FocusReason.OtherFocusReason)
-            self.start_btn.setEnabled(False)
-            self.address_edit.setEnabled(False)
-            self.test_mode.setEnabled(False)
-            self.btn_change_network.setEnabled(False)
+            self._set_session_controls_locked(True)
+
+    def _stop_idle_session_to_stopped(self) -> None:
+        from worker.idle_session import IdleSessionState
+
+        self._idle_state = IdleSessionState.STOPPED
+        self._idle_launching = False
+        self.controller.update_idle_options(enabled=False)
+        self._set_session_controls_locked(False)
+        self._set_activity_ui_waiting("")
+        self._refresh_header_chips()
 
     def _on_stop(self) -> None:
+        from worker.idle_session import IdleSessionState
+
         def _after(ok: bool) -> None:
             if not ok:
                 QMessageBox.warning(
@@ -1946,32 +2918,47 @@ class MainWindow(QMainWindow):
                     "New session / network change blocked. Try Stop again.",
                 )
                 self.stop_btn.setEnabled(True)
-                self.start_btn.setEnabled(False)
+                self._set_session_controls_locked(True)
                 return
-            self.start_btn.setEnabled(self._profile.mining_ready)
-            self.stop_btn.setEnabled(False)
-            self.address_edit.setEnabled(True)
-            self.test_mode.setEnabled(True)
-            self.btn_change_network.setEnabled(True)
+            self._stop_idle_session_to_stopped()
+            self.lbl_status.setText("Stopped.")
             self._persist_form()
+
+        # WAITING_FOR_IDLE: no miner process — stop monitoring only.
+        if (
+            self._idle_state == IdleSessionState.WAITING_FOR_IDLE
+            and not self.controller.is_running()
+            and not self._stop_busy
+        ):
+            self._stop_idle_session_to_stopped()
+            self.lbl_status.setText("Idle Mode cancelled.")
+            self._persist_form()
+            return
 
         self._begin_async_stop(_after)
 
     def _sync_idle_controls_if_needed(self) -> None:
         """Unlock Start on natural session end (battery/process); do not touch on stop_failed."""
+        from worker.idle_session import IdleSessionState
+
         if self._stop_busy:
             return
         if self.controller._stop_failed:
             return
         if self.controller.is_running():
             return
-        # Not running but UI still looks busy — reset to idle
+        if self._idle_state == IdleSessionState.WAITING_FOR_IDLE:
+            self._set_session_controls_locked(True)
+            return
+        if self._idle_state in (
+            IdleSessionState.MINING_IDLE,
+            IdleSessionState.MINING_ACTIVE,
+        ):
+            # Miner died while Idle session was mining — end session.
+            self._stop_idle_session_to_stopped()
+            return
         if self.stop_btn.isEnabled() and not self.start_btn.isEnabled():
-            self.start_btn.setEnabled(self._profile.mining_ready)
-            self.stop_btn.setEnabled(False)
-            self.address_edit.setEnabled(True)
-            self.test_mode.setEnabled(True)
-            self.btn_change_network.setEnabled(True)
+            self._set_session_controls_locked(False)
 
     def _apply_stats(self, stats: MiningStats) -> None:
         try:
@@ -1984,11 +2971,13 @@ class MainWindow(QMainWindow):
 
     def _apply_stats_inner(self, stats: MiningStats) -> None:
         self._sync_idle_controls_if_needed()
-        self.lbl_conn.setText(
+        conn_txt = (
             "TEST (local)"
             if stats.test_mode and stats.connected
             else ("Connected" if stats.connected else "Not connected")
         )
+        self.lbl_conn.setText(conn_txt)
+        self._refresh_header_chips(connected=bool(stats.connected), conn_txt=conn_txt)
         mode = getattr(stats, "activity_mode", "off") or "off"
         ui = (getattr(stats, "activity_ui", "") or "").strip()
         if mode == "off":
@@ -1996,26 +2985,33 @@ class MainWindow(QMainWindow):
             activity_tip = ""
         elif ui:
             self.lbl_activity.setText(ui)
-            activity_tip = "ACTIVE MODE" if "ACTIVE" in ui else (
-                "IDLE MODE" if "IDLE" in ui else ui
+            activity_tip = (
+                "Using PC" if ("Using PC" in ui or "ACTIVE" in ui) else (
+                    "AFK" if ("AFK" in ui or "IDLE" in ui) else ui
+                )
             )
         elif mode == "active":
-            self.lbl_activity.setText("ACTIVE MODE · Mining paused")
-            activity_tip = "ACTIVE MODE"
+            self.lbl_activity.setText("Using PC · reduced / paused")
+            activity_tip = "Using PC"
         elif mode == "idle":
-            self.lbl_activity.setText("IDLE MODE · Mining resumed")
-            activity_tip = "IDLE MODE"
+            self.lbl_activity.setText("AFK · AFK intensity")
+            activity_tip = "AFK"
         else:
             self.lbl_activity.setText(str(mode))
             activity_tip = str(mode)
-        if self.tray is not None and bool(self._cfg.get("auto_idle_mining", False)):
+        if self.tray is not None and self._idle_session_active():
+            from worker.idle_session import IdleSessionState
+
             base = APP_NAME
-            if self.controller.is_running() and activity_tip:
-                self.tray.setToolTip(f"{base} — {activity_tip}")
+            st = self._idle_state
+            if st == IdleSessionState.WAITING_FOR_IDLE:
+                self.tray.setToolTip(f"{base} — Idle Mode · waiting")
+            elif self.controller.is_running() and activity_tip:
+                self.tray.setToolTip(f"{base} — Idle Mode · {activity_tip}")
             elif self.controller.is_running():
-                self.tray.setToolTip(f"{base} — mining")
+                self.tray.setToolTip(f"{base} — Idle Mode · mining")
             else:
-                self.tray.setToolTip(base)
+                self.tray.setToolTip(f"{base} — Idle Mode")
         self.lbl_device.setText(stats.device_name or "—")
         rate = stats.hashrate
         if rate >= 1_000_000:
@@ -2025,7 +3021,8 @@ class MainWindow(QMainWindow):
         else:
             self.lbl_rate.setText(f"{rate:.0f} H/s")
         managed = self._profile.engine_kind == "managed_external"
-        if managed:
+        is_xmr = self._network_id == "xmr"
+        if managed and not is_xmr:
             self.lbl_total.setText("— (external engine)")
         else:
             self.lbl_total.setText(f"{stats.total_hashes:,}")
@@ -2041,7 +3038,7 @@ class MainWindow(QMainWindow):
             int(getattr(stats, "block_candidate_count", 0) or 0),
             int(stats.accepted or 0),
             int(stats.rejected or 0),
-            int(stats.total_hashes or 0),
+            int(stats.total_hashes or 0) if (not managed or is_xmr) else 0,
         )
         self._apply_best_stats(stats)
         self.lbl_engine_fee.setText(
@@ -2080,30 +3077,7 @@ class MainWindow(QMainWindow):
         if banner:
             self.lbl_pool_banner.setText(banner)
             self.lbl_pool_banner.setVisible(True)
-        if stats.ckpool_stats_url:
-            if self._network_id == "xmr":
-                self.lbl_stats_url.setText(
-                    f"Rewards / account (Kryptex; accepted≠block): {stats.ckpool_stats_url}"
-                )
-                self.btn_stats.setText("Open rewards page")
-            else:
-                self.lbl_stats_url.setText(
-                    f"Pool (check manually; accepted≠block): {stats.ckpool_stats_url}"
-                )
-                self.btn_stats.setText("Open pool page")
-            self.btn_stats.setEnabled(True)
-            self._stats_url = stats.ckpool_stats_url
-        else:
-            if self._network_id == "xmr":
-                self.lbl_stats_url.setText(
-                    "Rewards / account: Kryptex link enables when you enter an XMR address"
-                )
-            else:
-                self.lbl_stats_url.setText(
-                    "Pool stats: active when address set / network supports it"
-                )
-            self.btn_stats.setEnabled(False)
-            self._stats_url = ""
+        self._refresh_stats_link_ui(stats.ckpool_stats_url or "")
         if stats.submit_rpc_log:
             lines = []
             for e in stats.submit_rpc_log[:15]:
@@ -2246,14 +3220,16 @@ class MainWindow(QMainWindow):
         act_show.triggered.connect(self._show_from_tray)
         act_hide = QAction("Minimize to tray", self)
         act_hide.triggered.connect(self.hide)
-        act_settings = QAction("Settings…", self)
-        act_settings.triggered.connect(self._open_settings)
-        act_quit = QAction("Quit", self)
-        act_quit.triggered.connect(self._quit_app)
+        act_settings = QAction("Mining Settings…", self)
+        act_settings.triggered.connect(lambda: self._open_settings(focus="mining"))
+        act_idle = QAction("Idle Mode Settings…", self)
+        act_idle.triggered.connect(lambda: self._open_settings(focus="idle"))
+        act_exit = QAction("Exit", self)
+        act_exit.triggered.connect(self._quit_app)
         act_how = QAction("How to Use…", self)
         act_how.triggered.connect(self._show_howto)
-        act_fb = QAction("Feedback / Suggestions…", self)
-        act_fb.triggered.connect(self._show_feedback)
+        act_about = QAction(f"About {APP_SHORT}…", self)
+        act_about.triggered.connect(self._show_about)
         act_upd = QAction("Check for Updates…", self)
         act_upd.triggered.connect(lambda: self._check_for_updates(manual=True))
         self._act_show_scoreboard = QAction("Show scoreboard", self)
@@ -2261,13 +3237,14 @@ class MainWindow(QMainWindow):
         menu.addAction(act_show)
         menu.addAction(act_hide)
         menu.addAction(act_settings)
+        menu.addAction(act_idle)
         menu.addAction(self._act_show_scoreboard)
         menu.addSeparator()
         menu.addAction(act_how)
-        menu.addAction(act_fb)
+        menu.addAction(act_about)
         menu.addAction(act_upd)
         menu.addSeparator()
-        menu.addAction(act_quit)
+        menu.addAction(act_exit)
         self.tray.setContextMenu(menu)
         self._refresh_scoreboard_tray_action()
         self.tray.activated.connect(self._on_tray_activated)
@@ -2313,6 +3290,7 @@ class MainWindow(QMainWindow):
         self.scoreboard.update_counts(blocks, accepted, rejected, attempts)
         if self._scoreboard_overlay is not None:
             self._scoreboard_overlay.update_counts(blocks, accepted, rejected, attempts)
+        QTimer.singleShot(0, self._fit_chrome_to_scoreboard)
 
     def _difficulty_row_visible(self) -> bool:
         return self._network_id in SUPPORTED_BEST_HASH_NETWORKS
@@ -2506,7 +3484,9 @@ class MainWindow(QMainWindow):
             # Main window visible — overlay only while trayed; just re-enable for next hide
             self._hide_scoreboard_overlay()
 
-    def _open_settings(self) -> None:
+    def _open_settings(
+        self, *, focus_idle: bool = False, focus: str | None = None
+    ) -> None:
         dlg = SettingsDialog(self._cfg, self)
         dlg.form.pick_gpu_clicked.connect(self._on_pick_gpu)
         if self._network_id == "xmr":
@@ -2515,9 +3495,22 @@ class MainWindow(QMainWindow):
             dlg.form.set_binary_idle_ui(True, engine="rigel")
         else:
             dlg.form.set_binary_idle_ui(False, engine="native")
+        section = focus or ("idle" if focus_idle else None)
+        if section == "idle" and hasattr(dlg.form, "lbl_idle_section"):
+            dlg.form.lbl_idle_note.setStyleSheet(
+                "color: #9a3412; font-weight: 700;"
+            )
+            QTimer.singleShot(0, lambda: dlg.form.lbl_idle_section.setFocus())
+        elif section == "hardware" and hasattr(dlg.form, "lbl_thermal_hint"):
+            dlg.setWindowTitle("Hardware & Temperature — Easy Block Finder 4000")
+            QTimer.singleShot(0, lambda: dlg.form.pause_temp.setFocus())
+        elif section == "mining":
+            dlg.setWindowTitle("Mining Settings — Easy Block Finder 4000")
+            QTimer.singleShot(0, lambda: dlg.form.intensity.setFocus())
         if dlg.exec():
             vals = dlg.values()
             overlay = bool(vals.pop("scoreboard_overlay_enabled", True))
+            vals["idle_settings_configured"] = True
             self._cfg.update(vals)
             save_settings(vals)
             self._cfg = load_settings()
@@ -2538,11 +3531,11 @@ class MainWindow(QMainWindow):
                 )
 
     def _quit_from_menu(self) -> None:
-        """Menu-bar Quit: confirm, then full exit (same path as tray Quit)."""
+        """File → Exit: confirm, then full exit (same path as tray Exit)."""
         reply = QMessageBox.question(
             self,
-            "Quit",
-            "Quit Easy Block Finder 4000?\n\n"
+            "Exit",
+            "Exit Easy Block Finder 4000?\n\n"
             "Mining will stop and the app will exit completely "
             "(it will not stay in the tray).",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -2582,10 +3575,39 @@ class MainWindow(QMainWindow):
         self.setEnabled(False)
         QApplication.processEvents()
 
+    def _fit_chrome_to_scoreboard(self) -> None:
+        """Keep cards/controls within the scoreboard’s right edge."""
+        if not hasattr(self, "_chrome_band") or not hasattr(self, "scoreboard"):
+            return
+        # Clear any prior fixed width so sizeHint reflects digit content.
+        self.scoreboard.setMinimumWidth(0)
+        self.scoreboard.setMaximumWidth(16777215)
+        self.scoreboard.adjustSize()
+        w = max(
+            1,
+            self.scoreboard.sizeHint().width(),
+            self.scoreboard.minimumSizeHint().width(),
+        )
+        self._chrome_band.setFixedWidth(w)
+        self.scoreboard.setFixedWidth(w)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # Screen is reliable after show — re-cap to available desktop height.
+        self._clamp_window_to_screen()
+        QTimer.singleShot(0, self._fit_chrome_to_scoreboard)
+
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         if self._quit_busy_host is not None and self._quit_busy_host.isVisible():
             self._quit_busy_host.setGeometry(self.rect())
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            self.setMaximumSize(
+                max(self.minimumWidth(), avail.width()),
+                max(self.minimumHeight(), avail.height()),
+            )
 
     def _on_setup_wizard_finished(self, updates: dict) -> None:
         updates = dict(updates)
@@ -2781,7 +3803,7 @@ class MainWindow(QMainWindow):
             self._tray_minimize_tip_shown = True
             self.tray.showMessage(
                 APP_NAME,
-                "Still running in the tray. Double-click to open; tray menu → Quit to exit.",
+                "Still running in the tray. Double-click to open; tray menu → Exit to exit.",
                 QSystemTrayIcon.MessageIcon.Information,
                 2500,
             )

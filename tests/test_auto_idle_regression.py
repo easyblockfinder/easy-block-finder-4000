@@ -245,3 +245,20 @@ def test_interruptible_wait_aborts_on_activity(ctrl, monkeypatch):
     elapsed = __import__("time").perf_counter() - t0
     assert ok is False
     assert elapsed < 1.0
+
+
+def test_using_pc_duty_wait_not_aborted_by_active_mode(ctrl, monkeypatch):
+    """Using-PC reduced duty must sleep — abort_if_active is only for AFK waits."""
+    ctrl.update_idle_options(enabled=True, timeout_s=150, active_pct=10, idle_pct=100)
+    monkeypatch.setattr("worker.controller.idle_seconds", lambda: 0.0)
+    st = ctrl._eval_idle_policy()
+    assert st.mode == "active"
+    assert st.scale < 1.0
+    # Mimic mine-loop: do not pass abort_if_active while mode is active.
+    abort = bool(st.mode == "idle" and st.scale < 1.0)
+    assert abort is False
+    t0 = __import__("time").perf_counter()
+    ok = ctrl._interruptible_wait(0.35, chunk_s=0.05, abort_if_active=abort)
+    elapsed = __import__("time").perf_counter() - t0
+    assert ok is True
+    assert elapsed >= 0.25

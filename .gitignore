@@ -50,6 +50,8 @@ website/
 *.exe
 !scripts/*.ps1
 
-# Cursor / agent caches (if present under project)
+# Cursor / agent caches / local planning (never publish)
 .cursor/
 agent-transcripts/
+.superpowers/
+.kits/

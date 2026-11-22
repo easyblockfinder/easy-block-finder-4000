@@ -38,8 +38,8 @@ DEFAULTS: dict[str, Any] = {
     "selected_network": "btc",
     "address_by_network": {nid: "" for nid in NETWORK_ORDER},
     "intensity": 4,
-    "pause_temp": 65,
-    "resume_temp": 55,
+    "pause_temp": 75,
+    "resume_temp": 60,
     "test_mode": False,
     "window_width": 760,
     "window_height": 720,
@@ -65,11 +65,12 @@ DEFAULTS: dict[str, Any] = {
     "setup_wizard_done": False,
     # Per-network pool selection (empty = all defaults; preserves existing installs)
     "pool_by_network": {},
-    # Automatic Idle Mining (default OFF — existing installs unchanged)
-    "auto_idle_mining": False,
+    # Idle Mode (started from main "Start Idle" button — not during normal Start)
+    "auto_idle_mining": False,  # legacy; runtime enable is the Start Idle session
+    "idle_settings_configured": False,
     "idle_timeout_s": 150,
-    "idle_active_pct": 10,
-    "idle_idle_pct": 100,
+    "idle_active_pct": 10,  # While using PC
+    "idle_idle_pct": 80,  # While AFK
 }
 
 
@@ -78,7 +79,13 @@ def _normalize_loaded(data: dict[str, Any]) -> dict[str, Any]:
     out["address_by_network"] = dict(DEFAULTS["address_by_network"])
     out["app_donation"] = default_app_donation()
     out["pool_by_network"] = {}
-    idle_keys = ("auto_idle_mining", "idle_timeout_s", "idle_active_pct", "idle_idle_pct")
+    idle_keys = (
+        "auto_idle_mining",
+        "idle_settings_configured",
+        "idle_timeout_s",
+        "idle_active_pct",
+        "idle_idle_pct",
+    )
     for k, v in data.items():
         if k == "address_by_network" and isinstance(v, dict):
             for nid in NETWORK_ORDER:

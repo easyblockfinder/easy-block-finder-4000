@@ -38,14 +38,15 @@ def test_existing_user_keeps_intensity_and_skips_wizard():
     assert data["scoreboard_overlay_enabled"] is True
     assert data["pool_by_network"] == {}
     assert data["auto_idle_mining"] is False
+    assert data["idle_settings_configured"] is False
     assert data["idle_timeout_s"] == 150
     assert data["idle_active_pct"] == 10
-    assert data["idle_idle_pct"] == 100
+    assert data["idle_idle_pct"] == 80
 
 
 def test_fresh_install_gets_wizard_and_new_defaults():
     data = ss._normalize_loaded({})
     assert data["setup_wizard_done"] is False
     assert data["intensity"] == 4
-    assert data["pause_temp"] == 65
-    assert data["resume_temp"] == 55
+    assert data["pause_temp"] == 75
+    assert data["resume_temp"] == 60

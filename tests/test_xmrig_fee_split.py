@@ -72,6 +72,42 @@ def test_ingest_splits_fee_shares():
     assert r.snapshot.accepted == 2
 
 
+def test_ingest_hashes_total_deltas():
+    r = XmrigRunner(
+        Path("xmrig.exe"),
+        host="xmr.kryptex.network",
+        port=7029,
+        username="solo:x",
+        user_pool_hint="kryptex",
+    )
+    r._ingest(
+        {
+            "connection": {"pool": "xmr.kryptex.network:7029", "uptime": 10},
+            "results": {
+                "shares_good": 0,
+                "shares_total": 0,
+                "hashes_total": 1_000_000,
+            },
+            "hashrate": {"total": [100.0]},
+        }
+    )
+    assert r.snapshot.hashes_delta == 0  # baseline
+    assert r.snapshot.hashes_total == 0
+    r._ingest(
+        {
+            "connection": {"pool": "xmr.kryptex.network:7029", "uptime": 12},
+            "results": {
+                "shares_good": 0,
+                "shares_total": 0,
+                "hashes_total": 1_250_000,
+            },
+            "hashrate": {"total": [100.0]},
+        }
+    )
+    assert r.snapshot.hashes_delta == 250_000
+    assert r.snapshot.hashes_total == 250_000
+
+
 def test_parse_xmrig_new_job_line():
     d, h = parse_xmrig_new_job(
         "[2024-01-01]  net      new job from xmr.kryptex.network:7029 "

@@ -154,29 +154,32 @@ class ScoreboardWidget(QFrame):
             bottom.addStretch(1)
             root.addLayout(bottom)
         else:
-            # Bottom-align digit boxes so ATTEMPTS stays on the same row as
-            # BLK/ACC/REJ/TEMP; NET/GPU/ACC label sits above the ATTEMPTS box only.
-            outer = QHBoxLayout(self)
-            outer.setContentsMargins(0, 0, 0, 0)
-            outer.setSpacing(6)
+            # Hug digit content — NET/GPU/ACC centered over ATTEMPTS only.
+            self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+            root = QHBoxLayout(self)
+            root.setContentsMargins(0, 0, 0, 0)
+            root.setSpacing(6)
             bottom = Qt.AlignmentFlag.AlignBottom
-            outer.addWidget(self.blk, 0, bottom)
-            outer.addWidget(self.acc, 0, bottom)
-            outer.addWidget(self.rej, 0, bottom)
+            root.addWidget(self.blk, 0, bottom)
+            root.addWidget(self.acc, 0, bottom)
+            root.addWidget(self.rej, 0, bottom)
 
             att_wrap = QWidget()
-            att_wrap.setObjectName("attWrap")
+            att_wrap.setSizePolicy(
+                QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+            )
             att_col = QVBoxLayout(att_wrap)
             att_col.setContentsMargins(0, 0, 0, 0)
             att_col.setSpacing(2)
+            self.diff_summary.setAlignment(
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+            )
             att_col.addWidget(
                 self.diff_summary, 0, Qt.AlignmentFlag.AlignHCenter
             )
             att_col.addWidget(self.att, 0, Qt.AlignmentFlag.AlignHCenter)
-            outer.addWidget(att_wrap, 0, bottom)
-
-            outer.addWidget(self.temp, 0, bottom)
-            outer.addStretch(1)
+            root.addWidget(att_wrap, 0, bottom)
+            root.addWidget(self.temp, 0, bottom)
 
     def bind_external_summary(self, label: QLabel) -> None:
         """Mini overlay: show NET/GPU/ACC on the EBF title row."""

@@ -33,5 +33,7 @@ def test_existing_settings_keep_auto_idle_off(tmp_path, monkeypatch):
         {"intensity": 7, "address": "bc1qexampleaddress0000000000000000000"}
     )
     assert data["auto_idle_mining"] is False
+    assert data["idle_settings_configured"] is False
     assert data["idle_timeout_s"] == 150
+    assert data["idle_active_pct"] == 10
     assert data["intensity"] == 7
