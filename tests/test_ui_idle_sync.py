@@ -12,13 +12,17 @@ sys.path.insert(0, str(ROOT))
 
 from networks.profiles import get_profile  # noqa: E402
 from ui.main_window import MainWindow  # noqa: E402
+from worker.idle_session import IdleSessionState  # noqa: E402
 
 
 def _fake_window() -> SimpleNamespace:
     """MainWindow._sync_idle_controls_if_needed for thin stub."""
     w = SimpleNamespace()
     w._stop_busy = False
+    w._idle_state = IdleSessionState.STOPPED
+    w._network_id = "btc"
     w._profile = get_profile("btc")
+    w._cfg = {}
     w.controller = SimpleNamespace(
         _stop_failed=False,
         is_running=MagicMock(return_value=False),
@@ -33,12 +37,18 @@ def _fake_window() -> SimpleNamespace:
         isEnabled=lambda: w.stop_btn._en,
         setEnabled=lambda v: setattr(w.stop_btn, "_en", bool(v)),
     )
+    w.idle_start_btn = SimpleNamespace(setEnabled=MagicMock())
     w.address_edit = SimpleNamespace(setEnabled=MagicMock())
     w.test_mode = SimpleNamespace(setEnabled=MagicMock())
     w.btn_change_network = SimpleNamespace(setEnabled=MagicMock())
     w.donate_enable = SimpleNamespace(setEnabled=MagicMock())
     w.donate_percent = SimpleNamespace(setEnabled=MagicMock())
     w.donate_address_edit = SimpleNamespace(setEnabled=MagicMock())
+    w._idle_session_active = MagicMock(return_value=False)
+    w._stop_idle_session_to_stopped = MagicMock()
+    w._set_session_controls_locked = MainWindow._set_session_controls_locked.__get__(
+        w, MainWindow
+    )
     w._sync_idle_controls_if_needed = MainWindow._sync_idle_controls_if_needed.__get__(
         w, MainWindow
     )

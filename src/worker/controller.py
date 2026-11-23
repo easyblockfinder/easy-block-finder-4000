@@ -216,6 +216,47 @@ class MiningController:
         self._rigel_idle_paused = False
         self._ema_batch_s: float | None = None
         self._activity_ui: str = ""  # honest Status label for auto-idle
+        # Live Pool Statistical Audit (None = OFF — production search kernel only)
+        self._audit_live = None
+        # Stratum Work Ledger (None = OFF — independent of histogram audit)
+        self._work_ledger = None
+
+    def set_live_audit(self, enabled: bool) -> None:
+        """Enable/disable Live Pool Audit observer. OFF → no audit kernel, no hooks."""
+        if enabled:
+            if self._audit_live is None:
+                from audit.live_observer import LiveAuditObserver
+
+                self._audit_live = LiveAuditObserver()
+        else:
+            self._audit_live = None
+
+    def live_audit_snapshot(self) -> Optional[dict]:
+        if self._audit_live is None:
+            return None
+        from dataclasses import asdict
+
+        return asdict(self._audit_live.snapshot())
+
+    def set_work_ledger(self, enabled: bool) -> None:
+        """Enable/disable Stratum Work Ledger (no kernel / allocation changes)."""
+        if enabled:
+            if self._work_ledger is None:
+                from audit.work_ledger import StratumWorkLedger
+
+                self._work_ledger = StratumWorkLedger()
+        else:
+            self._work_ledger = None
+
+    def work_ledger_metrics(self) -> Optional[dict]:
+        if self._work_ledger is None:
+            return None
+        return self._work_ledger.metrics()
+
+    def work_ledger_export(self, *, mask: bool = True) -> Optional[dict]:
+        if self._work_ledger is None:
+            return None
+        return self._work_ledger.export_dict(mask=mask)
 
     def update_settings(self, intensity: int, pause_temp: int, resume_temp: int) -> None:
         self.intensity = max(1, min(10, int(intensity)))
@@ -868,6 +909,8 @@ class MiningController:
             if had_previous:
                 self.stats.best_record_broken = True
                 self._best_broken_pending = True
+            if self._work_ledger is not None:
+                self._work_ledger.on_gpu_best(float(rec.difficulty), rec.hash_be_hex)
 
     def _track_accepted_best(self, entry: dict[str, Any]) -> None:
         """Update accepted-share personal best after pool ACCEPTED (user shares only)."""
@@ -923,6 +966,8 @@ class MiningController:
             if had_previous:
                 self.stats.accepted_record_broken = True
                 self._accepted_broken_pending = True
+            if self._work_ledger is not None:
+                self._work_ledger.on_accepted_best(float(rec.difficulty), rec.hash_be_hex)
 
     def _run(self, session: int) -> None:
         try:
@@ -1963,10 +2008,28 @@ class MiningController:
                     f"oturum {prev_session}→{self._stratum.session_id}"
                 )
                 self._job = None
+            if self._work_ledger is not None and self._stratum.subscribed:
+                self._work_ledger.on_subscribe(
+                    session_id=int(self._stratum.session_id),
+                    extranonce1=str(self._stratum.extranonce1 or ""),
+                    extranonce2_size=int(self._stratum.extranonce2_size or 4),
+                )
         elif "connection error" in text.lower() or "connection lost" in text.lower() or "disconnected" in text.lower():
             with self._job_lock:
                 self._invalidate_all_jobs("connection lost")
                 self._job = None
+        if (
+            self._work_ledger is not None
+            and self._stratum
+            and self._stratum.subscribed
+            and self._stratum.extranonce1
+            and "subscribed" in text.lower()
+        ):
+            self._work_ledger.on_subscribe(
+                session_id=int(self._stratum.session_id),
+                extranonce1=str(self._stratum.extranonce1 or ""),
+                extranonce2_size=int(self._stratum.extranonce2_size or 4),
+            )
         self._emit()
 
     def _on_difficulty(self, diff: float) -> None:
@@ -1998,6 +2061,8 @@ class MiningController:
                 f"Sunucu mining.set_difficulty={new_diff} "
                 f"(no active allocation). suggested={self.stats.suggest_difficulty_sent}"
             )
+        if self._audit_live is not None:
+            self._audit_live.on_difficulty(new_diff)
         self._emit()
 
     def _on_job(self, params: list, clean: bool) -> None:
@@ -2088,6 +2153,24 @@ class MiningController:
             f"en1={job.extranonce1} en2_size={job.extranonce2_size} "
             f"ntime={job.ntime} nbits={job.nbits} branches={len(job.merkle_branches)}"
         )
+        if self._audit_live is not None:
+            self._audit_live.on_notify(job, clean)
+        if self._work_ledger is not None:
+            if self._stratum and self._stratum.subscribed:
+                # Ensure subscribe captured even if status text differed
+                self._work_ledger.on_subscribe(
+                    session_id=int(self._stratum.session_id),
+                    extranonce1=str(self._stratum.extranonce1 or ""),
+                    extranonce2_size=int(self._stratum.extranonce2_size or 4),
+                )
+            t_led = time.perf_counter()
+            self._work_ledger.on_notify(
+                job,
+                clean,
+                session_id=int(self._stratum.session_id) if self._stratum else 0,
+                payout_address=self._mining_address or self.address or "",
+            )
+            self._work_ledger.note_overhead_s(time.perf_counter() - t_led)
         self._emit()
 
     def _log_event(self, text: str) -> None:
@@ -2161,6 +2244,14 @@ class MiningController:
                     f"job={entry.get('job_id')} nonce={entry.get('nonce_hex')} (not a payout)"
                 )
                 self._track_accepted_best(entry)
+                if self._audit_live is not None:
+                    try:
+                        sd = float(entry.get("difficulty") or 0) or None
+                    except (TypeError, ValueError):
+                        sd = None
+                    self._audit_live.on_submit_result(
+                        accepted=True, rejected=False, share_difficulty=sd
+                    )
         else:
             self.stats.rejected += 1
             entry["status"] = f"pool_response (rejected: {msg})"
@@ -2169,6 +2260,14 @@ class MiningController:
             self._log_event(
                 f"Pool: REJECTED id={req_id} session={session_id} — {msg}"
             )
+            if self._audit_live is not None:
+                try:
+                    sd = float(entry.get("difficulty") or 0) or None
+                except (TypeError, ValueError):
+                    sd = None
+                self._audit_live.on_submit_result(
+                    accepted=False, rejected=True, share_difficulty=sd
+                )
 
         if entry.get("block_candidate") and not entry.get("test_mode"):
             if outcome_unknown:
@@ -2391,14 +2490,69 @@ class MiningController:
             )
             try:
                 t0 = time.perf_counter()
-                result = self._gpu.search(
-                    midstate=snap.midstate,
-                    header80=work.header80(),
-                    share_target=snap.share_target_value,
-                    start_nonce=work.start_nonce,
-                    count=work.count,
-                    track_best=track_best,
-                )
+                audit = self._audit_live
+                hist = None
+                if audit is not None and self.network_id in SUPPORTED_BEST_HASH_NETWORKS:
+                    if not self._gpu.ensure_audit_kernel():
+                        self._log_event(
+                            "Live audit: OpenCL audit kernel unavailable — "
+                            "falling back to production search (histogram skipped)"
+                        )
+                        result = self._gpu.search(
+                            midstate=snap.midstate,
+                            header80=work.header80(),
+                            share_target=snap.share_target_value,
+                            start_nonce=work.start_nonce,
+                            count=work.count,
+                            track_best=track_best,
+                        )
+                    else:
+                        result, hist = self._gpu.search_audit(
+                            midstate=snap.midstate,
+                            header80=work.header80(),
+                            share_target=snap.share_target_value,
+                            start_nonce=work.start_nonce,
+                            count=work.count,
+                            track_best=track_best,
+                        )
+                        from audit.work_family import work_family_id
+                        from mining.best_hash import verify_best_candidate
+
+                        cpu_fail = False
+                        if result.best_hash_be_hex and result.best_nonce is not None:
+                            hdr = snap.header_for_nonce(int(result.best_nonce))
+                            if not verify_best_candidate(hdr, result.best_hash_be_hex):
+                                cpu_fail = True
+                        audit.on_batch(
+                            family_id=work_family_id(
+                                prevhash=snap.prevhash,
+                                coinb1=snap.coinb1,
+                                coinb2=snap.coinb2,
+                                merkle_branches=snap.merkle_branches,
+                                version=snap.version,
+                                nbits=snap.nbits,
+                                ntime=snap.ntime,
+                                extranonce1=snap.extranonce1,
+                                extranonce2_size=snap.extranonce2_size,
+                            ),
+                            extranonce2_hex=snap.extranonce2_hex,
+                            header_prefix=snap.header_prefix,
+                            start_nonce=work.start_nonce,
+                            count=work.count,
+                            result=result,
+                            hist=hist,
+                            t0=t0,
+                            cpu_verify_failed=cpu_fail,
+                        )
+                else:
+                    result = self._gpu.search(
+                        midstate=snap.midstate,
+                        header80=work.header80(),
+                        share_target=snap.share_target_value,
+                        start_nonce=work.start_nonce,
+                        count=work.count,
+                        track_best=track_best,
+                    )
                 # Tampon dolduysa a hedefiyle ikinci tarama blok aday kayb n telafi
                 if result.truncated:
                     self._log_event(
@@ -2444,6 +2598,19 @@ class MiningController:
                 )
             except OSError:
                 pass
+            if self._work_ledger is not None:
+                # Family id already captured at notify; avoid re-hashing per batch.
+                t_led = time.perf_counter()
+                self._work_ledger.on_gpu_batch_completed(
+                    job_id=str(snap.job_id),
+                    work_family_id="",
+                    extranonce2_hex=str(snap.extranonce2_hex),
+                    start_nonce=int(work.start_nonce),
+                    allocated_count=int(work.count),
+                    scanned=int(scanned),
+                    kernel_s=(kernel_ms / 1000.0) if kernel_ms > 0 else 0.0,
+                )
+                self._work_ledger.note_overhead_s(time.perf_counter() - t_led)
             self.stats.last_batch = batch_n
             self.stats.last_scanned = scanned
             self.stats.last_global = result.global_size
@@ -2459,6 +2626,8 @@ class MiningController:
                 self._hash_window,
                 last_kernel_s=(kernel_ms / 1000.0) if kernel_ms > 0 else 0.0,
             )
+            if self._work_ledger is not None:
+                self._work_ledger.note_hashrate(float(self.stats.hashrate or 0.0))
 
             with self._job_lock:
                 cur_epoch = self._work_epoch
@@ -2472,6 +2641,8 @@ class MiningController:
                         f"nonce={nonce:08x} batch_epoch={work.validity_epoch} "
                         f"cur_epoch={cur_epoch}"
                     )
+                    if self._work_ledger is not None:
+                        self._work_ledger.on_inflight_aborted(1)
                     break
                 verified = snap.verify_nonce(nonce)
                 if verified:
@@ -2644,6 +2815,15 @@ class MiningController:
             f"job={job_id} en2={extranonce2} ntime={ntime} nonce={nonce_hex} "
             f"block={is_block}"
         )
+        if self._audit_live is not None:
+            try:
+                sd = float(snap.difficulty)
+            except (TypeError, ValueError):
+                sd = None
+            # submitted (outcome pending) — track max submitted difficulty
+            self._audit_live.on_submit_result(
+                accepted=False, rejected=False, share_difficulty=sd
+            )
 
         # Submit sonras : UI listeleri + async disk (g nderimi geciktirmez)
         if entry.get("app_donation"):

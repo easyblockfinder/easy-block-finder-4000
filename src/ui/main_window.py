@@ -613,6 +613,10 @@ class MainWindow(QMainWindow):
         self._bridge = _StatsBridge()
         self._bridge.updated.connect(self._apply_stats)
         self.controller = MiningController(on_stats=self._bridge.updated.emit)
+        if bool(self._cfg.get("mining_audit_live_enabled", False)):
+            self.controller.set_live_audit(True)
+        if bool(self._cfg.get("stratum_work_ledger_enabled", False)):
+            self.controller.set_work_ledger(True)
         self._stop_worker: _StopWorker | None = None
         self._stop_busy = False
         self._pending_quit = False
@@ -1316,6 +1320,9 @@ class MainWindow(QMainWindow):
         act_diag = QAction("Mining Diagnostics…", self)
         act_diag.triggered.connect(self._show_mining_diagnostics)
         tools_menu.addAction(act_diag)
+        act_audit = QAction("Mining Statistical Audit…", self)
+        act_audit.triggered.connect(self._show_mining_audit)
+        tools_menu.addAction(act_audit)
 
         help_menu = self.menuBar().addMenu("&Help")
         act_how = QAction("How to Use…", self)
@@ -1506,6 +1513,30 @@ class MainWindow(QMainWindow):
             idle_s=idle_seconds(),
         )
         MiningDiagnosticsDialog(text, self).exec()
+
+    def _show_mining_audit(self) -> None:
+        from ui.mining_audit_dialog import MiningAuditDialog
+
+        def _set_live(on: bool) -> None:
+            self.controller.set_live_audit(bool(on))
+            save_settings({"mining_audit_live_enabled": bool(on)})
+            self._cfg["mining_audit_live_enabled"] = bool(on)
+
+        def _set_ledger(on: bool) -> None:
+            self.controller.set_work_ledger(bool(on))
+            save_settings({"stratum_work_ledger_enabled": bool(on)})
+            self._cfg["stratum_work_ledger_enabled"] = bool(on)
+
+        MiningAuditDialog(
+            live_enabled=bool(self._cfg.get("mining_audit_live_enabled", False)),
+            get_live_snapshot=self.controller.live_audit_snapshot,
+            set_live_enabled=_set_live,
+            ledger_enabled=bool(self._cfg.get("stratum_work_ledger_enabled", False)),
+            get_ledger_metrics=self.controller.work_ledger_metrics,
+            get_ledger_export=self.controller.work_ledger_export,
+            set_ledger_enabled=_set_ledger,
+            parent=self,
+        ).exec()
 
     def _load_capacity_blocks(self) -> dict[str, str]:
         """Restore last successful hardware capacity probe from settings."""

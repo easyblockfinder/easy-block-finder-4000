@@ -14,6 +14,12 @@ dist/
 build/
 *.ico
 
+# Stratum / GPU Work Ledger session dumps (never commit live evidence)
+work_ledger_*_session*.json
+work_ledger_*_GPU*.json
+work_ledger_*_smoke*.json
+work_ledger_*_SYNTHETIC*.json
+
 # Secrets / local env
 .env
 .env.*

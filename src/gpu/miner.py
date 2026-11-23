@@ -190,6 +190,9 @@ class GpuMiner:
         self._queue = None
         self._kernel = None
         self._kernel_hash = None
+        self._kernel_audit = None
+        self._audit_ready = False
+        self._audit_error: Optional[str] = None
         self._device = None
         self._device_name = ""
         self._prefer_bus_id = (prefer_bus_id or "").strip() or None
@@ -199,6 +202,8 @@ class GpuMiner:
         self._d_out = None
         self._d_cnt = None
         self._d_best = None
+        self._d_audit_tgt = None
+        self._d_hist_wg = None
         self._host_best = np.zeros(10, dtype=np.uint32)  # key[8], nonce, lock
         # At Diff=1, there can be many shares per batch; it can reduce the 16-slot block candidate
         self._max_hits = 256
@@ -206,9 +211,12 @@ class GpuMiner:
         self._host_tgt = np.zeros(8, dtype=np.uint32)
         self._host_out = np.zeros(self._max_hits, dtype=np.uint32)
         self._host_cnt = np.zeros(1, dtype=np.uint32)
+        self._host_audit_tgt = np.zeros(12 * 8, dtype=np.uint32)
+        self._hist_wg_cap = 0
         # Host→GPU copy cache (reload unless midstate / target changes)
         self._uploaded_ms: Optional[bytes] = None
         self._uploaded_tgt: Optional[int] = None
+        self._uploaded_audit_tgt = False
         self._init_opencl(autotune_local=autotune_local)
 
     @property
@@ -315,13 +323,73 @@ class GpuMiner:
 
     def close(self) -> None:
         self._d_ms = self._d_tgt = self._d_out = self._d_cnt = self._d_best = None
+        self._d_audit_tgt = self._d_hist_wg = None
         self._kernel = None
         self._kernel_hash = None
+        self._kernel_audit = None
+        self._audit_ready = False
         self._queue = None
         self._ctx = None
         self._device = None
         self._uploaded_ms = None
         self._uploaded_tgt = None
+        self._uploaded_audit_tgt = False
+
+    def ensure_audit_kernel(self) -> bool:
+        """
+        Lazily compile sha256d_audit.cl. Does not alter the production search kernel.
+        Returns False if unavailable (caller should treat as skipped/untested).
+        """
+        if self._audit_ready and self._kernel_audit is not None:
+            return True
+        if self._audit_error:
+            return False
+        cl = self._cl
+        if cl is None or self._ctx is None or self._device is None:
+            self._audit_error = "OpenCL context missing"
+            return False
+        path = Path(__file__).with_name("sha256d_audit.cl")
+        program = None
+        try:
+            source = path.read_text(encoding="utf-8")
+            program = cl.Program(self._ctx, source)
+            program.build(options=["-cl-std=CL1.2"])
+            self._kernel_audit = program.sha256d_search_audit
+            from audit.thresholds import audit_target_words_flat
+
+            words = audit_target_words_flat()
+            self._host_audit_tgt = np.asarray(words, dtype=np.uint32)
+            mf = cl.mem_flags
+            self._d_audit_tgt = cl.Buffer(
+                self._ctx, mf.READ_ONLY, self._host_audit_tgt.nbytes
+            )
+            self._uploaded_audit_tgt = False
+            self._audit_ready = True
+            self._audit_error = None
+            log.info("Audit OpenCL kernel ready (%s)", path.name)
+            return True
+        except Exception as exc:
+            log_txt = ""
+            if program is not None:
+                try:
+                    log_txt = program.get_build_info(
+                        self._device, cl.program_build_info.LOG
+                    )
+                except Exception:
+                    pass
+            self._audit_error = f"{exc}\n{log_txt}".strip()
+            self._kernel_audit = None
+            self._audit_ready = False
+            log.warning("Audit kernel unavailable: %s", self._audit_error)
+            return False
+
+    @property
+    def audit_status(self) -> str:
+        if self._audit_ready:
+            return "ready"
+        if self._audit_error:
+            return "unavailable"
+        return "not_loaded"
 
     def search(
         self,
@@ -435,6 +503,141 @@ class GpuMiner:
             best_hash_be=best_hash_be,
             best_nonce=best_nonce,
         )
+
+    def search_audit(
+        self,
+        midstate: bytes,
+        header80: bytes,
+        share_target: int,
+        start_nonce: int,
+        count: int,
+        max_hits: int = 256,
+        track_best: bool = True,
+    ) -> tuple[SearchResult, object]:
+        """
+        Audit-only path: sha256d_search_audit + WG histogram.
+        Production search() is unchanged. Raises GpuUnavailableError if audit kernel missing.
+        Returns (SearchResult, HistogramResult).
+        """
+        from audit.histogram import HistogramResult, sum_wg_histogram
+
+        if not self.ensure_audit_kernel():
+            raise GpuUnavailableError(
+                f"Audit kernel unavailable: {self._audit_error or 'unknown'}"
+            )
+        if count <= 0:
+            empty = SearchResult([], 0, 0, self._local_size, start_nonce)
+            return empty, HistogramResult(counts=[0] * 12, attempts=0)
+        if track_best and (
+            self._local_size <= 0
+            or self._local_size > 512
+            or (self._local_size & (self._local_size - 1)) != 0
+        ):
+            raise ValueError(
+                f"track_best requires power-of-two local_size <= 512 (got {self._local_size})"
+            )
+        if start_nonce + count - 1 > 0xFFFFFFFF:
+            count = 0xFFFFFFFF - start_nonce + 1
+
+        cl = self._cl
+        assert cl is not None and self._ctx is not None and self._queue is not None
+        assert self._kernel_audit is not None
+        assert self._d_ms is not None and self._d_tgt is not None
+        assert self._d_out is not None and self._d_cnt is not None
+        assert self._d_best is not None and self._d_audit_tgt is not None
+
+        if max_hits != self._max_hits:
+            self._max_hits = max_hits
+            self._host_out = np.zeros(max_hits, dtype=np.uint32)
+            self._d_out = cl.Buffer(self._ctx, cl.mem_flags.WRITE_ONLY, 4 * max_hits)
+
+        t0, t1, t2, _ = header_tail_words(header80)
+        if midstate != self._uploaded_ms:
+            self._host_ms[:] = struct.unpack("<8I", midstate)
+            cl.enqueue_copy(self._queue, self._d_ms, self._host_ms)
+            self._uploaded_ms = bytes(midstate)
+        if share_target != self._uploaded_tgt:
+            self._host_tgt[:] = target_to_le_words(share_target)
+            cl.enqueue_copy(self._queue, self._d_tgt, self._host_tgt)
+            self._uploaded_tgt = int(share_target)
+        if not self._uploaded_audit_tgt:
+            cl.enqueue_copy(self._queue, self._d_audit_tgt, self._host_audit_tgt)
+            self._uploaded_audit_tgt = True
+
+        local = int(self._local_size)
+        global_size = ((int(count) + local - 1) // local) * local
+        num_groups = global_size // local
+        need = num_groups * 12
+        if self._d_hist_wg is None or self._hist_wg_cap < need:
+            self._hist_wg_cap = max(need, 4096 * 12)
+            self._d_hist_wg = cl.Buffer(
+                self._ctx, cl.mem_flags.WRITE_ONLY, 8 * self._hist_wg_cap
+            )
+        host_hist = np.zeros(need, dtype=np.uint64)
+
+        self._host_cnt[0] = 0
+        cl.enqueue_copy(self._queue, self._d_cnt, self._host_cnt)
+        if track_best:
+            self._host_best[:8] = 0xFFFFFFFF
+            self._host_best[8:] = 0
+            cl.enqueue_copy(self._queue, self._d_best, self._host_best)
+
+        self._kernel_audit.set_args(
+            self._d_ms,
+            np.uint32(t0),
+            np.uint32(t1),
+            np.uint32(t2),
+            np.uint32(int(start_nonce) & 0xFFFFFFFF),
+            self._d_tgt,
+            self._d_out,
+            self._d_cnt,
+            np.uint32(self._max_hits),
+            np.uint32(int(count)),
+            self._d_best,
+            np.uint32(1 if track_best else 0),
+            self._d_audit_tgt,
+            self._d_hist_wg,
+        )
+        cl.enqueue_nd_range_kernel(
+            self._queue, self._kernel_audit, (global_size,), (local,)
+        )
+        cl.enqueue_copy(self._queue, self._host_cnt, self._d_cnt)
+        cl.enqueue_copy(self._queue, host_hist, self._d_hist_wg)
+        if track_best:
+            cl.enqueue_copy(self._queue, self._host_best, self._d_best)
+        self._queue.finish()
+
+        raw_n = int(self._host_cnt[0])
+        truncated = raw_n > self._max_hits
+        n = min(raw_n, self._max_hits)
+        hits: list[int] = []
+        if n > 0:
+            cl.enqueue_copy(self._queue, self._host_out, self._d_out)
+            self._queue.finish()
+            hits = [int(x) for x in self._host_out[:n].tolist()]
+
+        best_hash_be: Optional[bytes] = None
+        best_nonce: Optional[int] = None
+        if track_best:
+            key = [int(x) for x in self._host_best[:8]]
+            if any(w != 0xFFFFFFFF for w in key):
+                best_hash_be = struct.pack(">8I", *key)[::-1]
+                best_nonce = int(self._host_best[8])
+
+        result = SearchResult(
+            hits=hits,
+            scanned=int(count),
+            global_size=global_size,
+            local_size=local,
+            start_nonce=int(start_nonce) & 0xFFFFFFFF,
+            raw_hit_count=raw_n,
+            truncated=truncated,
+            best_hash_be=best_hash_be,
+            best_nonce=best_nonce,
+        )
+        hist = sum_wg_histogram(host_hist, num_groups, 12)
+        hist.attempts = int(count)
+        return result, hist
 
     def hash_nonces(
         self,

@@ -61,6 +61,10 @@ DEFAULTS: dict[str, Any] = {
     "capacity_check_ts": 0.0,
     # Tray mini LED scoreboard (user can dismiss; re-enable from tray menu)
     "scoreboard_overlay_enabled": True,
+    # Mining Statistical Audit (Live Pool) — default OFF; no performance impact when false
+    "mining_audit_live_enabled": False,
+    # Stratum Work Ledger — default OFF; independent of histogram audit
+    "stratum_work_ledger_enabled": False,
     # First-run machine setup wizard (intensity / thermal / GPU)
     "setup_wizard_done": False,
     # Per-network pool selection (empty = all defaults; preserves existing installs)
