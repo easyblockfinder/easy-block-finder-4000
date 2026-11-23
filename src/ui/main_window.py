@@ -14,10 +14,19 @@ from app_meta import (
     load_app_logo_pixmap,
 )
 from PyQt6.QtCore import QEvent, QObject, QSize, QThread, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPixmap
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QIcon,
+    QKeySequence,
+    QPixmap,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -251,6 +260,32 @@ QPushButton#idleStartBtn:disabled {
     border-color: #c8d2dc;
     background: #f0f3f6;
 }
+QPushButton#gameModeBtn {
+    background: #ffffff;
+    color: #0369a1;
+    border: 1px solid #0284c7;
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-weight: 700;
+    font-size: 12px;
+    min-width: 110px;
+    min-height: 34px;
+}
+QPushButton#gameModeBtn:hover { background: #f0f9ff; }
+QPushButton#gameModeBtn:disabled {
+    color: #9bb0b8;
+    border-color: #c8d2dc;
+    background: #f0f3f6;
+}
+QLabel#gameModeBetaBadge {
+    color: #ffffff;
+    background: #ea580c;
+    border-radius: 3px;
+    padding: 0px 4px;
+    font-weight: 800;
+    font-size: 8px;
+    letter-spacing: 0.3px;
+}
 QPushButton#stopBtn {
     background: #ffffff;
     color: #9f1239;
@@ -260,6 +295,7 @@ QPushButton#stopBtn {
     font-weight: 700;
     font-size: 12px;
     min-width: 90px;
+    min-height: 34px;
 }
 QPushButton#stopBtn:hover { background: #fff1f2; }
 QPushButton#stopBtn:disabled {
@@ -276,12 +312,16 @@ QPushButton#changeNetworkBtn {
     font-weight: 700;
     font-size: 12px;
     min-width: 120px;
+    min-height: 34px;
 }
 QPushButton#changeNetworkBtn:hover { background: #ecfdf5; }
 QPushButton#changeNetworkBtn:disabled {
     color: #9bb0b8;
     border-color: #c8d2dc;
     background: #f0f3f6;
+}
+QPushButton#startBtn, QPushButton#idleStartBtn {
+    min-height: 34px;
 }
 QPushButton#supportDevBtn {
     background: #ffffff;
@@ -642,9 +682,12 @@ class MainWindow(QMainWindow):
         self._last_net_diff: float | None = None
         self._last_best_diff: float | None = None
         self._last_accepted_best_diff: float | None = None
+        self._last_accepted_diff: float | None = None  # session LAST ACC
         self._scoreboard_overlay: ScoreboardOverlayWindow | None = None
         self._quit_busy_host: QWidget | None = None
         self._quit_busy: BusyIndicator | None = None
+        self._game_busy_host: QWidget | None = None
+        self._game_busy: BusyIndicator | None = None
 
         self._build_menu()
 
@@ -797,7 +840,7 @@ class MainWindow(QMainWindow):
         )
         ctrl = QHBoxLayout(ctrl_w)
         ctrl.setContentsMargins(0, 0, 0, 0)
-        ctrl.setSpacing(8)
+        ctrl.setSpacing(10)
         self.start_btn = QPushButton("▶  Start")
         self.start_btn.setObjectName("startBtn")
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -809,6 +852,22 @@ class MainWindow(QMainWindow):
             "after the AFK timeout it switches to “While AFK” intensity. "
             "Configure under Settings → Idle Mode."
         )
+        self.game_btn = QPushButton("Game Mode")
+        self.game_btn.setObjectName("gameModeBtn")
+        self.game_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.game_btn.setToolTip(
+            "Scratch Mining: real SHA256d when you click a tile (BTC native). "
+            "Can run together with Start — GPU splits ~50/50."
+        )
+        self._game_beta_badge = QLabel("BETA", self.game_btn)
+        self._game_beta_badge.setObjectName("gameModeBetaBadge")
+        self._game_beta_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._game_beta_badge.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        self._game_beta_badge.adjustSize()
+        self.game_btn.installEventFilter(self)
+        QTimer.singleShot(0, self._position_game_beta_badge)
         self.stop_btn = QPushButton("■  Stop")
         self.stop_btn.setObjectName("stopBtn")
         self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -816,22 +875,31 @@ class MainWindow(QMainWindow):
         self.btn_change_network = QPushButton("Change network")
         self.btn_change_network.setObjectName("changeNetworkBtn")
         self.btn_change_network.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_change_network.setMinimumHeight(34)
         self.btn_change_network.clicked.connect(self._on_change_network)
         self.start_btn.clicked.connect(self._on_start)
         self.idle_start_btn.clicked.connect(self._on_start_idle)
+        self.game_btn.clicked.connect(self._on_start_game)
         self.stop_btn.clicked.connect(self._on_stop)
-        ctrl.addWidget(self.start_btn)
-        ctrl.addWidget(self.idle_start_btn)
-        ctrl.addWidget(self.stop_btn)
-        ctrl.addWidget(self.btn_change_network)
-        ctrl.addStretch(1)
+        for b in (
+            self.start_btn,
+            self.idle_start_btn,
+            self.game_btn,
+            self.stop_btn,
+            self.btn_change_network,
+        ):
+            b.setMinimumHeight(34)
+            b.setSizePolicy(
+                QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+            )
+            ctrl.addWidget(b, 0, Qt.AlignmentFlag.AlignVCenter)
+        ctrl.addSpacing(12)
         self.chip_conn = _status_chip("Not connected", on=False)
         self.chip_mode = _status_chip("Solo mining", on=False)
         self.chip_idle = _status_chip("Idle Mode off", on=False)
-        ctrl.addWidget(self.chip_conn, 0, Qt.AlignmentFlag.AlignVCenter)
-        ctrl.addWidget(self.chip_mode, 0, Qt.AlignmentFlag.AlignVCenter)
-        ctrl.addWidget(self.chip_idle, 0, Qt.AlignmentFlag.AlignVCenter)
+        for chip in (self.chip_conn, self.chip_mode, self.chip_idle):
+            ctrl.addWidget(chip, 0, Qt.AlignmentFlag.AlignVCenter)
+        ctrl.addStretch(1)
+        self._ctrl_row = ctrl_w
         band.addWidget(ctrl_w)
 
         h_layout.addWidget(self._chrome_band, 0, Qt.AlignmentFlag.AlignLeft)
@@ -842,6 +910,8 @@ class MainWindow(QMainWindow):
 
         self._idle_state = IdleSessionState.STOPPED
         self._idle_launching = False
+        self._pending_session_kind = "auto"
+        self._scratch_window = None
 
         tabs = QTabWidget()
         tabs.setObjectName("mineTabs")
@@ -895,17 +965,39 @@ class MainWindow(QMainWindow):
 
         sess_card, sess_body = _tab_section(
             "Session",
-            hint="Intensity, thermal limits, and Idle Mode are under Settings menu.",
+            hint="Intensity, temps, and Idle Mode: Settings menu → Mining Settings.",
         )
         self.test_mode = QCheckBox("Test mode (no pool, no real submit)")
         self.test_mode.setChecked(bool(self._cfg.get("test_mode")))
         self.test_mode.toggled.connect(self._persist_form)
         sess_body.addWidget(self.test_mode)
+
+        strat_row = QHBoxLayout()
+        strat_row.setSpacing(8)
+        self.lbl_search_strategy = QLabel("Search strategy")
+        self.lbl_search_strategy.setObjectName("statKey")
+        strat_row.addWidget(self.lbl_search_strategy, 0)
+        self.search_strategy = QComboBox()
+        self.search_strategy.setMinimumHeight(34)
+        self.search_strategy.addItem("Sequential (default)", "sequential")
+        self.search_strategy.addItem("Reverse", "reverse")
+        self.search_strategy.addItem("Randomized", "randomized")
+        self.search_strategy.setToolTip(
+            "BTC/BCH nonce search order only — does not increase block odds."
+        )
+        raw_strat = str(self._cfg.get("mining_search_strategy") or "sequential").lower()
+        idx = max(0, self.search_strategy.findData(raw_strat))
+        self.search_strategy.setCurrentIndex(idx if idx >= 0 else 0)
+        self.search_strategy.currentIndexChanged.connect(self._on_search_strategy_changed)
+        strat_row.addWidget(self.search_strategy, 1)
+        sess_body.addLayout(strat_row)
+        self.lbl_search_strategy_hint = QLabel("")
+        self.lbl_search_strategy_hint.setVisible(False)
         s_layout.addWidget(sess_card)
 
         health_card, health_body = _tab_section(
-            "Thermal & engine fees",
-            hint="XMRig/Rigel developer fees are not added to your accepted count.",
+            "Status",
+            hint="Live thermal source and third-party engine fee shares.",
         )
         self.lbl_thermal_src = QLabel("Temperature source: —")
         self.lbl_thermal_src.setObjectName("statKey")
@@ -1324,6 +1416,12 @@ class MainWindow(QMainWindow):
         act_audit.triggered.connect(self._show_mining_audit)
         tools_menu.addAction(act_audit)
 
+        view_menu = self.menuBar().addMenu("&View")
+        act_max = QAction("Maximize", self)
+        act_max.setShortcut(QKeySequence(Qt.Key.Key_F11))
+        act_max.triggered.connect(self._toggle_maximize)
+        view_menu.addAction(act_max)
+
         help_menu = self.menuBar().addMenu("&Help")
         act_how = QAction("How to Use…", self)
         act_how.triggered.connect(self._show_howto)
@@ -1345,6 +1443,13 @@ class MainWindow(QMainWindow):
         act_about = QAction(f"About {APP_SHORT}…", self)
         act_about.triggered.connect(self._show_about)
         help_menu.addAction(act_about)
+
+    def _toggle_maximize(self, *_args) -> None:
+        """Title-bar maximize (□) equivalent — F11 / View menu."""
+        if self.isMaximized() or self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showMaximized()
 
     def _show_howto(self) -> None:
         from ui.howto_dialog import HowToUseDialog
@@ -1591,25 +1696,79 @@ class MainWindow(QMainWindow):
         self.lbl_rate.setText("0 H/s")
         self._set_activity_ui_waiting("")
 
+    def _position_game_beta_badge(self) -> None:
+        """Pin mini BETA chip to the Game Mode button's top-right corner."""
+        badge = getattr(self, "_game_beta_badge", None)
+        btn = getattr(self, "game_btn", None)
+        if badge is None or btn is None:
+            return
+        badge.adjustSize()
+        badge.move(
+            max(0, btn.width() - badge.width() - 2),
+            2,
+        )
+        badge.raise_()
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        if obj is getattr(self, "game_btn", None) and event.type() in (
+            QEvent.Type.Resize,
+            QEvent.Type.Show,
+        ):
+            self._position_game_beta_badge()
+        return super().eventFilter(obj, event)
+
     def _set_session_controls_locked(self, locked: bool) -> None:
-        """Same lock pattern as Start: freeze address/network; only Stop remains."""
+        """Freeze address/network while hashing; allow attaching the other mode."""
         ready = bool(self._profile.mining_ready)
         blocked = bool(network_block_reason(self._network_id, probe_gpu=False))
+        running = bool(self.controller.is_running())
+        idle_sess = bool(self._idle_session_active())
+        native_btc = (
+            self._network_id == "btc"
+            and self._profile.engine_kind == "native_sha256d"
+        )
+        auto_on = bool(getattr(self.controller, "is_auto_mode", lambda: False)())
+        game_on = bool(getattr(self.controller, "is_game_mode", lambda: False)())
+        # Fresh start when idle; or attach Auto while Game-only is live.
         can_start = (
             ready
             and not blocked
-            and not locked
-            and not self.controller.is_running()
-            and not self._idle_session_active()
+            and not idle_sess
+            and (
+                (not locked and not running)
+                or (running and native_btc and game_on and not auto_on)
+            )
+        )
+        # Fresh Game, attach while Auto-only, or reopen board if Game is live.
+        scratch_open = self._scratch_window is not None
+        can_game = (
+            ready
+            and not blocked
+            and not idle_sess
+            and native_btc
+            and (
+                (not locked and not running)
+                or (running and auto_on and not game_on)
+                or (running and game_on and not scratch_open)
+            )
         )
         self.start_btn.setEnabled(can_start)
-        self.idle_start_btn.setEnabled(can_start)
-        self.stop_btn.setEnabled(
-            bool(locked) or self.controller.is_running() or self._idle_session_active()
+        # Idle matches Start for a fresh session; also when Game board is closed
+        # but a game-only session is still live (same attach window as Start).
+        can_idle = can_start and (
+            not running
+            or (game_on and not auto_on and not scratch_open)
         )
-        self.address_edit.setEnabled(not locked)
-        self.test_mode.setEnabled(not locked)
-        self.btn_change_network.setEnabled(not locked)
+        self.idle_start_btn.setEnabled(can_idle)
+        self.game_btn.setEnabled(can_game)
+        self.stop_btn.setEnabled(
+            bool(locked) or running or idle_sess
+        )
+        self.address_edit.setEnabled(not locked and not running)
+        self.test_mode.setEnabled(not locked and not running)
+        self.btn_change_network.setEnabled(not locked and not running)
+        if hasattr(self, "search_strategy"):
+            self._refresh_search_strategy_ui()
 
     def _set_activity_ui_waiting(self, text: str) -> None:
         if hasattr(self, "lbl_activity"):
@@ -1909,6 +2068,7 @@ class MainWindow(QMainWindow):
     def _apply_network_to_ui(self) -> None:
         self._profile = get_profile(self._network_id)
         self.setWindowTitle(f"{APP_NAME} — {self._profile.display_name}")
+        self._refresh_search_strategy_ui()
         from networks.pool_resolve import resolve_pool
 
         ep = resolve_pool(self._network_id, self._cfg.get("pool_by_network") or {})
@@ -2199,19 +2359,29 @@ class MainWindow(QMainWindow):
     def _clamp_window_to_screen(
         self, *, preferred_w: int | None = None, preferred_h: int | None = None
     ) -> None:
-        """Cap size to the available desktop (taskbar excluded)."""
+        """
+        Initial/preferred resize within the available desktop.
+        Do NOT setMaximumSize to the screen — that greys out the title-bar
+        maximize button on Windows when max == work-area size.
+        """
+        # Keep maximize enabled (□).
+        self.setMaximumSize(16777215, 16777215)
         screen = self.screen() or QApplication.primaryScreen()
         if screen is None:
             if preferred_w is not None and preferred_h is not None:
                 self.resize(preferred_w, preferred_h)
             return
+        if self.isMaximized() or self.isFullScreen():
+            return
         avail = screen.availableGeometry()
-        max_w = max(self.minimumWidth(), avail.width())
-        max_h = max(self.minimumHeight(), avail.height())
-        self.setMaximumSize(max_w, max_h)
+        fit_w = max(self.minimumWidth(), avail.width())
+        fit_h = max(self.minimumHeight(), avail.height())
         w = preferred_w if preferred_w is not None else self.width()
         h = preferred_h if preferred_h is not None else self.height()
-        self.resize(min(max(self.minimumWidth(), w), max_w), min(max(self.minimumHeight(), h), max_h))
+        self.resize(
+            min(max(self.minimumWidth(), w), fit_w),
+            min(max(self.minimumHeight(), h), fit_h),
+        )
 
     def _current_tab_scroll(self) -> QScrollArea | None:
         if not hasattr(self, "_mine_tabs"):
@@ -2391,12 +2561,46 @@ class MainWindow(QMainWindow):
                 ),
                 "setup_wizard_done": bool(self._cfg.get("setup_wizard_done", False)),
                 "pool_by_network": self._cfg.get("pool_by_network") or {},
+                "mining_search_strategy": str(
+                    self.search_strategy.currentData()
+                    or self._cfg.get("mining_search_strategy")
+                    or "sequential"
+                ),
             }
         )
         self._cfg = load_settings()
         self._refresh_addr_hint()
         if not self.controller.is_running():
             self._refresh_stats_link_ui()
+
+    def _on_search_strategy_changed(self, *_args) -> None:
+        if self.controller.is_running() or self._idle_session_active():
+            # Revert combo to locked session strategy
+            cur = self.controller.search_strategy()
+            i = self.search_strategy.findData(cur)
+            if i >= 0:
+                self.search_strategy.blockSignals(True)
+                self.search_strategy.setCurrentIndex(i)
+                self.search_strategy.blockSignals(False)
+            return
+        self.controller.set_search_strategy(str(self.search_strategy.currentData() or "sequential"))
+        self._persist_form()
+
+    def _refresh_search_strategy_ui(self) -> None:
+        native = self._profile.engine_kind == "native_sha256d"
+        for w in (self.lbl_search_strategy, self.search_strategy):
+            w.setVisible(native)
+        self.lbl_search_strategy_hint.setVisible(False)
+        locked = self.controller.is_running() or self._idle_session_active()
+        self.search_strategy.setEnabled(native and not locked)
+        if native and not locked:
+            raw = str(self._cfg.get("mining_search_strategy") or "sequential").lower()
+            i = self.search_strategy.findData(raw)
+            if i >= 0 and self.search_strategy.currentIndex() != i:
+                self.search_strategy.blockSignals(True)
+                self.search_strategy.setCurrentIndex(i)
+                self.search_strategy.blockSignals(False)
+            self.controller.set_search_strategy(raw)
 
     def _intensity_val(self) -> int:
         return int(self._cfg.get("intensity") or 4)
@@ -2455,9 +2659,36 @@ class MainWindow(QMainWindow):
             idle_pct=self._idle_idle_pct_val(),
         )
         self._tick_idle_session()
+        self._poll_temperature_always()
 
     def _allow_mine_without_temp(self) -> bool:
-        return bool(self._cfg.get("allow_mine_without_temp", False))
+        # Thermal protection is mandatory — override is never honored.
+        return False
+
+    def _poll_temperature_always(self) -> None:
+        """Temperature runs even when idle; updates HUD without a mining session."""
+        try:
+            self.controller.gpu_bus_id = str(self._cfg.get("gpu_bus_id") or "")
+            self.controller.gpu_uuid = str(self._cfg.get("gpu_uuid") or "")
+            if not self.controller.is_running():
+                self.controller.network_id = self._network_id
+                self.controller.poll_temperature()
+            stats = self.controller.stats
+            if stats.temp_readable and stats.gpu_temp is not None:
+                extra = " · paused" if stats.paused_thermal else ""
+                self.lbl_temp.setText(f"{stats.gpu_temp}°C{extra}")
+                self._update_scoreboard_temp(int(stats.gpu_temp))
+                self._refresh_thermal_unsafe_banner(running_without_temp=False)
+            elif not self.controller.is_running():
+                self.lbl_temp.setText("unreadable · mining blocked until fixed")
+                self._update_scoreboard_temp(None)
+                self._refresh_thermal_unsafe_banner(running_without_temp=False)
+            if getattr(stats, "thermal_source", ""):
+                self.lbl_thermal_src.setText(
+                    f"Temperature source: {stats.thermal_source}"
+                )
+        except Exception:
+            pass
 
     def _miner_consent_ok(self) -> bool:
         return bool(self._cfg.get("miner_download_consent", False))
@@ -2648,6 +2879,7 @@ class MainWindow(QMainWindow):
 
             self._idle_state = IdleSessionState.STOPPED
             self._idle_launching = False
+            self._pending_session_kind = "auto"
             self._on_start_inner()
         except Exception as exc:
             import traceback
@@ -2658,6 +2890,49 @@ class MainWindow(QMainWindow):
                 "Could not start",
                 f"Start failed unexpectedly:\n\n{exc}",
             )
+
+    def _on_start_game(self) -> None:
+        """Mandatory consent each entry → Game Mode session (BTC native only)."""
+        from worker.idle_session import IdleSessionState
+
+        if self._network_id != "btc" or self._profile.engine_kind != "native_sha256d":
+            QMessageBox.information(
+                self,
+                "Game Mode",
+                "Scratch Mining Game Mode is available on BTC (native OpenCL) only.",
+            )
+            return
+        # Reopen board UI if Game session is already live (window was closed).
+        if (
+            self.controller.is_running()
+            and self.controller.is_game_mode()
+            and self._scratch_window is None
+        ):
+            self._show_game_busy("Opening Game Mode…")
+            try:
+                self._open_scratch_window()
+                self._set_session_controls_locked(True)
+            finally:
+                self._hide_game_busy()
+            return
+        from ui.scratch_game_dialog import ScratchGameConsentDialog
+
+        dlg = ScratchGameConsentDialog(self)
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        self._idle_state = IdleSessionState.STOPPED
+        self._idle_launching = False
+        self._pending_session_kind = "game"
+        self._persist_form()
+        self._push_settings()
+        if not self._preflight_can_mine():
+            self._pending_session_kind = "auto"
+            return
+        self._show_game_busy("Opening Game Mode…")
+        try:
+            self._begin_mining_after_gates()
+        finally:
+            self._hide_game_busy()
 
     def _idle_settings_ready(self) -> bool:
         return bool(self._cfg.get("idle_settings_configured", False)) or bool(
@@ -2752,6 +3027,7 @@ class MainWindow(QMainWindow):
                 self._idle_state = mining_state_from_policy_mode(mode)
 
     def _launch_idle_mining(self) -> None:
+        self._pending_session_kind = "auto"
         """Start miner for Start Idle (Using-PC intensity from the first moment)."""
         from worker.idle_session import IdleSessionState
 
@@ -2847,27 +3123,37 @@ class MainWindow(QMainWindow):
 
         from monitor.thermal_probe import probe_temperature_readable
 
-        allow_no_temp = self._allow_mine_without_temp()
         temp_ok, temp_detail = probe_temperature_readable(
             self._network_id,
             gpu_bus_id=str(self._cfg.get("gpu_bus_id") or ""),
             gpu_uuid=str(self._cfg.get("gpu_uuid") or ""),
         )
-        if not temp_ok and not allow_no_temp:
-            if not self._confirm_mine_without_temp(temp_detail):
-                if (
-                    self._idle_state == IdleSessionState.WAITING_FOR_IDLE
-                    and not self.controller.is_running()
-                ):
-                    self.lbl_status.setText(
-                        "Waiting for system idle... (thermal gate blocked — still monitoring)"
-                    )
-                return
-            allow_no_temp = True
         if not temp_ok:
-            self._refresh_thermal_unsafe_banner(running_without_temp=True)
+            self._refresh_thermal_unsafe_banner(running_without_temp=False)
+            QMessageBox.warning(
+                self,
+                "Temperature required",
+                "Mining cannot start without a readable temperature sensor.\n\n"
+                f"{temp_detail}\n\n"
+                "Thermal protection is mandatory: fix NVML/CPU sensors, then try again.",
+            )
+            if (
+                self._idle_state == IdleSessionState.WAITING_FOR_IDLE
+                and not self.controller.is_running()
+            ):
+                self.lbl_status.setText(
+                    "Waiting for system idle... (thermal gate blocked — still monitoring)"
+                )
+            return
 
         try:
+            if self._profile.engine_kind == "native_sha256d":
+                self.controller.set_search_strategy(
+                    str(self.search_strategy.currentData() or "sequential")
+                )
+            else:
+                self.controller.set_search_strategy("sequential")
+            self._refresh_search_strategy_ui()
             self.controller.update_cpu_options(
                 cpu_thread_limit=self._cpu_threads_val(),
                 pause_on_battery=self._pause_battery_val(),
@@ -2881,7 +3167,12 @@ class MainWindow(QMainWindow):
             )
 
             # Enable policy once this Start Idle session is about to mine.
-            arm_idle = self._idle_state != IdleSessionState.STOPPED
+            # Game Mode never arms idle hashing.
+            session_kind = str(self._pending_session_kind or "auto")
+            arm_idle = (
+                self._idle_state != IdleSessionState.STOPPED
+                and session_kind != "game"
+            )
             to = int(self._cfg.get("idle_timeout_s") or 150)
             self.controller.update_idle_options(
                 enabled=arm_idle,
@@ -2894,9 +3185,13 @@ class MainWindow(QMainWindow):
                 self.address_edit.text(),
                 test_mode=self.test_mode.isChecked(),
                 network_id=self._network_id,
-                allow_mine_without_temp=allow_no_temp,
+                allow_mine_without_temp=False,
                 pool_by_network=self._cfg.get("pool_by_network") or {},
+                session_kind=session_kind,
             )
+            if session_kind == "game":
+                self._open_scratch_window()
+            self._pending_session_kind = "auto"
             if arm_idle:
                 # Keep Using-PC intensity at session start (do not jump to AFK %).
                 self._idle_state = IdleSessionState.MINING_ACTIVE
@@ -2911,6 +3206,7 @@ class MainWindow(QMainWindow):
                         arm_session=True,
                     )
         except Exception as exc:
+            self._pending_session_kind = "auto"
             from engines.windows_security import looks_like_defender_block
             from ui.defender_help_dialog import show_defender_help
 
@@ -2924,8 +3220,74 @@ class MainWindow(QMainWindow):
             self.stop_btn.setEnabled(True)
             self.start_btn.clearFocus()
             self.idle_start_btn.clearFocus()
+            self.game_btn.clearFocus()
             self.setFocus(Qt.FocusReason.OtherFocusReason)
             self._set_session_controls_locked(True)
+
+    def _open_scratch_window(self) -> None:
+        from ui.scratch_game_window import ScratchGameWindow
+
+        QApplication.processEvents()
+        if self._scratch_window is not None:
+            self._detach_scratch_window()
+
+        def _on_tile(en2: int, tid: int) -> bool:
+            ok, msg = self.controller.enqueue_game_at(int(en2), int(tid))
+            if not ok and self._scratch_window is not None:
+                self._scratch_window.lbl_event.setText(
+                    f"EN2 {en2} tile {tid}: {msg}"
+                )
+                self._scratch_window.lbl_event.setVisible(True)
+            return bool(ok)
+
+        win = ScratchGameWindow(
+            on_tile=_on_tile,
+            on_reload_tiles=self.controller.game_tile_snapshot,
+            parent=None,
+        )
+        win.closed.connect(self._on_scratch_window_closed)
+        self._scratch_window = win
+        self.controller.set_game_board_open(True)
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    def _on_scratch_window_closed(self) -> None:
+        """User closed Game Mode window → same teardown as Stop."""
+        self._scratch_window = None
+        try:
+            self.controller.set_game_board_open(False)
+        except Exception:
+            pass
+        if self._stop_busy:
+            self._set_session_controls_locked(False)
+            return
+        if self.controller.is_running() or self._idle_session_active():
+            self._on_stop()
+        else:
+            self._set_session_controls_locked(False)
+
+    def _detach_scratch_window(self) -> None:
+        """Close the board without treating it as a user Stop request."""
+        win = self._scratch_window
+        self._scratch_window = None
+        if win is None:
+            return
+        try:
+            win.closed.disconnect(self._on_scratch_window_closed)
+        except TypeError:
+            pass
+        try:
+            win.close()
+        except Exception:
+            pass
+        try:
+            self.controller.set_game_board_open(False)
+        except Exception:
+            pass
+
+    def _close_scratch_window(self) -> None:
+        self._detach_scratch_window()
 
     def _stop_idle_session_to_stopped(self) -> None:
         from worker.idle_session import IdleSessionState
@@ -2951,6 +3313,7 @@ class MainWindow(QMainWindow):
                 self.stop_btn.setEnabled(True)
                 self._set_session_controls_locked(True)
                 return
+            self._close_scratch_window()
             self._stop_idle_session_to_stopped()
             self.lbl_status.setText("Stopped.")
             self._persist_form()
@@ -3002,6 +3365,15 @@ class MainWindow(QMainWindow):
 
     def _apply_stats_inner(self, stats: MiningStats) -> None:
         self._sync_idle_controls_if_needed()
+        if self._scratch_window is not None and getattr(
+            stats, "session_kind", ""
+        ) in ("game", "both"):
+            try:
+                self._scratch_window.apply_stats(stats)
+            except Exception:
+                import traceback
+
+                traceback.print_exc()
         conn_txt = (
             "TEST (local)"
             if stats.test_mode and stats.connected
@@ -3121,16 +3493,11 @@ class MainWindow(QMainWindow):
             extra = " · paused" if stats.paused_thermal else ""
             self.lbl_temp.setText(f"{stats.gpu_temp}°C{extra}")
             self._update_scoreboard_temp(int(stats.gpu_temp))
-            if not self._allow_mine_without_temp():
-                self._refresh_thermal_unsafe_banner(running_without_temp=False)
+            self._refresh_thermal_unsafe_banner(running_without_temp=False)
         else:
             self._update_scoreboard_temp(None)
-            if self.controller.allow_mine_without_temp or self._allow_mine_without_temp():
-                self.lbl_temp.setText("unreadable · thermal protection OFF (unsafe)")
-                self._refresh_thermal_unsafe_banner(running_without_temp=True)
-            else:
-                self.lbl_temp.setText("unreadable · start blocked unless override")
-                self._refresh_thermal_unsafe_banner(running_without_temp=False)
+            self.lbl_temp.setText("unreadable · all mining paused until fixed")
+            self._refresh_thermal_unsafe_banner(running_without_temp=False)
         if managed:
             self.lbl_work.setText(
                 f"External engine · rate={self.lbl_rate.text()} · "
@@ -3138,14 +3505,16 @@ class MainWindow(QMainWindow):
                 f"{(stats.status or '')[:80]}"
             )
         elif stats.last_scanned:
+            strat = getattr(stats, "search_strategy", None) or "sequential"
             self.lbl_work.setText(
-                f"scanned={stats.last_scanned:,}   "
+                f"strategy={strat}   scanned={stats.last_scanned:,}   "
                 f"global={stats.last_global:,}  local={stats.last_local}   "
                 f"kernel={stats.last_kernel_ms:.1f}ms   sleep={stats.last_sleep_s * 1000:.0f}ms"
             )
         else:
             self.lbl_work.setText("no kernel yet (connected ≠ hashing)")
         self.lbl_status.setText(stats.status)
+        self._refresh_search_strategy_ui()
         st = (stats.status or "").lower()
         if (
             not self._defender_help_shown
@@ -3328,17 +3697,18 @@ class MainWindow(QMainWindow):
 
     def _push_difficulty_row(self) -> None:
         vis = self._difficulty_row_visible()
-        net, best, acc = (
+        net, best, acc, last = (
             self._last_net_diff,
             self._last_best_diff,
             self._last_accepted_best_diff,
+            self._last_accepted_diff,
         )
         self.scoreboard.set_difficulty_row(
-            net, best, visible=vis, accepted_best=acc
+            net, best, visible=vis, accepted_best=acc, last_accepted=last
         )
         if self._scoreboard_overlay is not None:
             self._scoreboard_overlay.set_difficulty_row(
-                net, best, visible=vis, accepted_best=acc
+                net, best, visible=vis, accepted_best=acc, last_accepted=last
             )
 
     def _load_stored_best_into_row(self) -> None:
@@ -3346,6 +3716,7 @@ class MainWindow(QMainWindow):
         self._last_net_diff = None
         self._last_best_diff = None
         self._last_accepted_best_diff = None
+        self._last_accepted_diff = None
         gpu_diff = None
         acc_diff = None
         if self._difficulty_row_visible():
@@ -3406,12 +3777,16 @@ class MainWindow(QMainWindow):
             acc_live = getattr(stats, "accepted_best_difficulty", None)
             if acc_live is not None:
                 self._last_accepted_best_diff = acc_live
+            last_live = getattr(stats, "last_accepted_difficulty", None)
+            if last_live is not None:
+                self._last_accepted_diff = last_live
             self._set_status_best_labels(
                 gpu_live if gpu_live is not None else self._last_best_diff,
                 acc_live if acc_live is not None else self._last_accepted_best_diff,
                 visible=True,
             )
         else:
+            self._last_accepted_diff = None
             self._set_status_best_labels(None, None, visible=False)
         self._push_difficulty_row()
         if getattr(stats, "best_record_broken", False) and self._difficulty_row_visible():
@@ -3442,6 +3817,7 @@ class MainWindow(QMainWindow):
             self._last_best_diff,
             visible=self._difficulty_row_visible(),
             accepted_best=self._last_accepted_best_diff,
+            last_accepted=self._last_accepted_diff,
         )
         self._scoreboard_overlay.show_overlay()
         self._refresh_scoreboard_tray_action()
@@ -3518,7 +3894,17 @@ class MainWindow(QMainWindow):
     def _open_settings(
         self, *, focus_idle: bool = False, focus: str | None = None
     ) -> None:
-        dlg = SettingsDialog(self._cfg, self)
+        def _after_reset_records() -> None:
+            self.controller.reload_best_hash_records()
+            self._load_stored_best_into_row()
+            self._hide_accepted_best_banner()
+
+        dlg = SettingsDialog(
+            self._cfg,
+            self,
+            on_reset_records=_after_reset_records,
+            network_id=self._network_id,
+        )
         dlg.form.pick_gpu_clicked.connect(self._on_pick_gpu)
         if self._network_id == "xmr":
             dlg.form.set_binary_idle_ui(True, engine="xmr")
@@ -3527,11 +3913,11 @@ class MainWindow(QMainWindow):
         else:
             dlg.form.set_binary_idle_ui(False, engine="native")
         section = focus or ("idle" if focus_idle else None)
-        if section == "idle" and hasattr(dlg.form, "lbl_idle_section"):
+        if section == "idle" and hasattr(dlg.form, "lbl_idle_note"):
             dlg.form.lbl_idle_note.setStyleSheet(
                 "color: #9a3412; font-weight: 700;"
             )
-            QTimer.singleShot(0, lambda: dlg.form.lbl_idle_section.setFocus())
+            QTimer.singleShot(0, lambda: dlg.form.idle_timeout.setFocus())
         elif section == "hardware" and hasattr(dlg.form, "lbl_thermal_hint"):
             dlg.setWindowTitle("Hardware & Temperature — Easy Block Finder 4000")
             QTimer.singleShot(0, lambda: dlg.form.pause_temp.setFocus())
@@ -3592,6 +3978,48 @@ class MainWindow(QMainWindow):
         host.hide()
         self._quit_busy_host = host
 
+    def _ensure_game_busy_overlay(self) -> None:
+        if self._game_busy_host is not None:
+            return
+        host = QWidget(self)
+        host.setObjectName("gameBusyHost")
+        host.setStyleSheet(
+            "QWidget#gameBusyHost { background: rgba(238, 241, 244, 220); }"
+        )
+        lay = QVBoxLayout(host)
+        lay.setContentsMargins(48, 48, 48, 48)
+        lay.addStretch(1)
+        self._game_busy = BusyIndicator(host)
+        lay.addWidget(self._game_busy, 0, Qt.AlignmentFlag.AlignHCenter)
+        lay.addStretch(1)
+        host.hide()
+        self._game_busy_host = host
+
+    def _show_game_busy(self, message: str = "Opening Game Mode…") -> None:
+        """Loading circle until the scratch board window is ready."""
+        self._ensure_game_busy_overlay()
+        assert self._game_busy_host is not None and self._game_busy is not None
+        self._game_busy_host.setGeometry(self.rect())
+        self._game_busy_host.raise_()
+        self._game_busy_host.show()
+        self._game_busy.show_busy(message or "Opening Game Mode…")
+        self.game_btn.setEnabled(False)
+        QApplication.processEvents()
+
+    def _hide_game_busy(self) -> None:
+        if self._game_busy is not None:
+            self._game_busy.hide_busy()
+        if self._game_busy_host is not None:
+            self._game_busy_host.hide()
+        # Re-apply enable rules (busy path forces game_btn off).
+        try:
+            locked = bool(self.controller.is_running()) or bool(
+                self._idle_session_active()
+            )
+            self._set_session_controls_locked(locked)
+        except Exception:
+            self.game_btn.setEnabled(True)
+
     def _show_quit_busy(self, message: str = "Quitting…") -> None:
         """Full-window spinner while stop/teardown runs (Quit can take a moment)."""
         self._ensure_quit_busy_overlay()
@@ -3607,18 +4035,26 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
     def _fit_chrome_to_scoreboard(self) -> None:
-        """Keep cards/controls within the scoreboard’s right edge."""
+        """Align chrome width to scoreboard, but never crush the control row."""
         if not hasattr(self, "_chrome_band") or not hasattr(self, "scoreboard"):
             return
         # Clear any prior fixed width so sizeHint reflects digit content.
         self.scoreboard.setMinimumWidth(0)
         self.scoreboard.setMaximumWidth(16777215)
         self.scoreboard.adjustSize()
-        w = max(
+        board_w = max(
             1,
             self.scoreboard.sizeHint().width(),
             self.scoreboard.minimumSizeHint().width(),
         )
+        ctrl_w = 0
+        if hasattr(self, "_ctrl_row") and self._ctrl_row is not None:
+            self._ctrl_row.adjustSize()
+            ctrl_w = max(
+                self._ctrl_row.sizeHint().width(),
+                self._ctrl_row.minimumSizeHint().width(),
+            )
+        w = max(board_w, ctrl_w)
         self._chrome_band.setFixedWidth(w)
         self.scoreboard.setFixedWidth(w)
 
@@ -3632,13 +4068,8 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if self._quit_busy_host is not None and self._quit_busy_host.isVisible():
             self._quit_busy_host.setGeometry(self.rect())
-        screen = self.screen() or QApplication.primaryScreen()
-        if screen is not None:
-            avail = screen.availableGeometry()
-            self.setMaximumSize(
-                max(self.minimumWidth(), avail.width()),
-                max(self.minimumHeight(), avail.height()),
-            )
+        if self._game_busy_host is not None and self._game_busy_host.isVisible():
+            self._game_busy_host.setGeometry(self.rect())
 
     def _on_setup_wizard_finished(self, updates: dict) -> None:
         updates = dict(updates)

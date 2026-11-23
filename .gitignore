@@ -61,3 +61,18 @@ website/
 agent-transcripts/
 .superpowers/
 .kits/
+
+# Dig-pointer drafts (ship only assets/cursors/user_pickaxe.png)
+assets/cursors/mining_pick*
+assets/cursors/*.jpg
+
+# Local experimental OpenCL search-strategy PoC (not shipped)
+src/gpu/strategy_poc.py
+src/gpu/sha256d_strategy.cl
+scripts/bench_search_strategy_*.py
+scripts/validate_search_strategy_poc.py
+tests/test_search_strategy_poc.py
+
+# Vibe / local scratch notes
+*vibe*
+.vibe/

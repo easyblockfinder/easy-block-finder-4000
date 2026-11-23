@@ -81,12 +81,12 @@ def test_abort_if_temp_required_blocks():
     assert "Blocked" in c.stats.status
 
 
-def test_abort_if_temp_required_allows_override():
+def test_abort_if_temp_required_ignores_override():
     c = MiningController()
-    c.allow_mine_without_temp = True
+    c.allow_mine_without_temp = True  # ignored — thermal is mandatory
     c.stats = MiningStats(temp_readable=False, thermal_source="none")
-    assert c._abort_if_temp_required() is False
-    assert "WARNING" in c.stats.status
+    assert c._abort_if_temp_required() is True
+    assert "Blocked" in c.stats.status
 
 
 def test_abort_if_temp_ok():
@@ -98,7 +98,7 @@ def test_abort_if_temp_ok():
 
 def test_thermal_gate_pauses_when_sensor_lost(monkeypatch):
     c = MiningController()
-    c.allow_mine_without_temp = False
+    c.allow_mine_without_temp = True  # ignored
     c._resolved_gpu_bus = "00000000:01:00.0"
     c._paused = False
     monkeypatch.setattr(
@@ -108,3 +108,16 @@ def test_thermal_gate_pauses_when_sensor_lost(monkeypatch):
     assert c._thermal_gate() is False
     assert c._paused is True
     assert c.stats.paused_thermal is True
+
+
+def test_poll_temperature_updates_stats(monkeypatch):
+    c = MiningController()
+    c.gpu_bus_id = "00000000:01:00.0"
+    c._resolved_gpu_bus = "00000000:01:00.0"
+    monkeypatch.setattr(
+        "monitor.gpu_devices.temperature_for_bus",
+        lambda bus: (71, "NVML test"),
+    )
+    assert c.poll_temperature() == 71
+    assert c.stats.gpu_temp == 71
+    assert c.stats.temp_readable is True

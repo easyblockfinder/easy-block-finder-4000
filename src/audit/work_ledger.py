@@ -278,10 +278,17 @@ class StratumWorkLedger:
         allocated_count: int,
         scanned: int,
         kernel_s: float = 0.0,
+        strategy: str = "sequential",
+        seed_fp: str = "",
+        logical_start: int | None = None,
     ) -> None:
         """
-        Record one completed production-kernel batch.
-        ATTEMPTS += scanned only. Coverage interval = [start, start+scanned).
+        Record one completed GPU batch. ATTEMPTS += scanned only.
+
+        Coverage interval:
+          - default / sequential / reverse (physical contiguous): [start_nonce, +scanned)
+          - randomized (or any mode with logical_start set): logical [logical_start, +scanned)
+            keyed by (family, en2, strategy, seed_fp) so bijections stay unique-safe.
         """
         jid = str(job_id)
         st = self._jobs.get(jid)
@@ -291,33 +298,47 @@ class StratumWorkLedger:
         if scanned_n <= 0:
             return
         en2 = (extranonce2_hex or "").lower()
-        start = int(start_nonce) & 0xFFFFFFFF
-        end = start + scanned_n
-        if end > 0x100000000:
-            end = 0x100000000
-            scanned_n = max(0, end - start)
-            if scanned_n <= 0:
-                return
+        strat = (strategy or "sequential").strip().lower() or "sequential"
+        sfp = (seed_fp or "").strip().lower()
 
-        # Prefer family from notify state; allow caller override if present
-        fid = (work_family_id or st.family_id or "").strip() or st.family_id
-        key = (fid, en2)
+        if logical_start is not None:
+            start = int(logical_start) & 0xFFFFFFFF
+            end = start + scanned_n
+            if end > 0x100000000:
+                end = 0x100000000
+                scanned_n = max(0, end - start)
+            key: tuple = (st.family_id if not work_family_id else work_family_id.strip() or st.family_id, en2, strat, sfp)
+        else:
+            start = int(start_nonce) & 0xFFFFFFFF
+            end = start + scanned_n
+            if end > 0x100000000:
+                end = 0x100000000
+                scanned_n = max(0, end - start)
+            fid = (work_family_id or st.family_id or "").strip() or st.family_id
+            # sequential/reverse physical: keep legacy 2-tuple key for compat
+            if strat in ("sequential", "reverse") and not sfp:
+                key = (fid, en2)
+            else:
+                key = (fid, en2, strat, sfp)
+        if scanned_n <= 0:
+            return
+
         existing = self._coverage.get(key, [])
         newly_unique, merged = insert_interval_merged(existing, start, end)
         _dup = max(0, scanned_n - newly_unique)
         self._coverage[key] = merged
         # Per-job raw ranges kept coalesced lightly for diagnostics (cap growth)
-        jr = st.en2_ranges.setdefault(en2, [])
+        range_key = f"{en2}|{strat}|{sfp}" if (strat != "sequential" or sfp or logical_start is not None) else en2
+        jr = st.en2_ranges.setdefault(range_key, [])
         if jr and jr[-1][1] == start:
             jr[-1] = (jr[-1][0], end)
         else:
             jr.append((start, end))
             if len(jr) > 64:
-                # Compact job-local view; global _coverage remains authoritative
                 _, jr_m = insert_interval_merged([], jr[0][0], jr[0][1])
                 for a, b in jr[1:]:
                     _, jr_m = insert_interval_merged(jr_m, a, b)
-                st.en2_ranges[en2] = jr_m
+                st.en2_ranges[range_key] = jr_m
         st.hashes_scanned += scanned_n
         st.batches_completed += 1
         st.allocated_count_sum += max(0, int(allocated_count))

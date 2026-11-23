@@ -65,6 +65,8 @@ DEFAULTS: dict[str, Any] = {
     "mining_audit_live_enabled": False,
     # Stratum Work Ledger — default OFF; independent of histogram audit
     "stratum_work_ledger_enabled": False,
+    # Mining Search Strategy (BTC/BCH native only): sequential | reverse | randomized
+    "mining_search_strategy": "sequential",
     # First-run machine setup wizard (intensity / thermal / GPU)
     "setup_wizard_done": False,
     # Per-network pool selection (empty = all defaults; preserves existing installs)

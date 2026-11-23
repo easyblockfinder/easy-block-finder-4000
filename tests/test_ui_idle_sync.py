@@ -38,6 +38,7 @@ def _fake_window() -> SimpleNamespace:
         setEnabled=lambda v: setattr(w.stop_btn, "_en", bool(v)),
     )
     w.idle_start_btn = SimpleNamespace(setEnabled=MagicMock())
+    w.game_btn = SimpleNamespace(setEnabled=MagicMock())
     w.address_edit = SimpleNamespace(setEnabled=MagicMock())
     w.test_mode = SimpleNamespace(setEnabled=MagicMock())
     w.btn_change_network = SimpleNamespace(setEnabled=MagicMock())
@@ -52,6 +53,7 @@ def _fake_window() -> SimpleNamespace:
     w._sync_idle_controls_if_needed = MainWindow._sync_idle_controls_if_needed.__get__(
         w, MainWindow
     )
+    w._refresh_search_strategy_ui = MagicMock()
     return w
 
 

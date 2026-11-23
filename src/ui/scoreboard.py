@@ -48,7 +48,7 @@ QLabel#diffSummaryCompact {
     font-weight: 700;
     letter-spacing: 0.5px;
 }
-QPushButton#scoreClose {
+QPushButton#scoreClose, QPushButton#scoreHome {
     background: #1a1a1a;
     color: #ff6b5a;
     border: 1px solid #333;
@@ -61,7 +61,10 @@ QPushButton#scoreClose {
     max-height: 16px;
     font-size: 10px;
 }
-QPushButton#scoreClose:hover {
+QPushButton#scoreHome {
+    color: #ffffff;
+}
+QPushButton#scoreClose:hover, QPushButton#scoreHome:hover {
     background: #d32f2f;
     color: #ffffff;
     border-color: #d32f2f;
@@ -89,15 +92,24 @@ QLabel#diffSummaryCompact {
 _CELEBRATE_MS = 1600
 
 
-def _summary_line(
+def _summary_html(
     network_diff: float | None,
     gpu_best: float | None,
     accepted_best: float | None,
+    last_accepted: float | None,
+    *,
+    compact: bool,
+    celebrate: bool = False,
 ) -> str:
+    """NET/GPU/ACC normal; LAST muted but readable. Rich-text for color split."""
+    last_color = "#94a3b8" if compact else "#64748b"
+    prefix = "NEW RECORD&nbsp;&nbsp;" if celebrate else ""
     return (
-        f"NET {format_diff_short(network_diff)}  "
-        f"GPU {format_diff_short(gpu_best)}  "
-        f"ACC {format_diff_short(accepted_best)}"
+        f"{prefix}NET {format_diff_short(network_diff)}&nbsp;&nbsp;"
+        f"GPU {format_diff_short(gpu_best)}&nbsp;&nbsp;"
+        f"ACC {format_diff_short(accepted_best)}&nbsp;&nbsp;"
+        f'<span style="color:{last_color};font-weight:600">'
+        f"LAST {format_diff_short(last_accepted)}</span>"
     )
 
 
@@ -127,11 +139,14 @@ class ScoreboardWidget(QFrame):
         # overlay title row shows the same text after "EBF".
         self.diff_summary = QLabel("")
         self.diff_summary.setObjectName("diffSummary")
+        self.diff_summary.setTextFormat(Qt.TextFormat.RichText)
         self.diff_summary.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         self.diff_summary.setVisible(False)
         self.diff_summary.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._celebrate_timer: QTimer | None = None
-        self._summary_text = ""
+        self._summary_parts: tuple[
+            float | None, float | None, float | None, float | None
+        ] = (None, None, None, None)
         self._external_summary: QLabel | None = None
 
         if compact:
@@ -182,8 +197,15 @@ class ScoreboardWidget(QFrame):
             root.addWidget(self.temp, 0, bottom)
 
     def bind_external_summary(self, label: QLabel) -> None:
-        """Mini overlay: show NET/GPU/ACC on the EBF title row."""
+        """Mini overlay: show NET/GPU/ACC/LAST on the EBF title row."""
+        label.setTextFormat(Qt.TextFormat.RichText)
         self._external_summary = label
+
+    def _summary_html(self, *, celebrate: bool = False) -> str:
+        net, gpu, acc, last = self._summary_parts
+        return _summary_html(
+            net, gpu, acc, last, compact=self._compact, celebrate=celebrate
+        )
 
     def update_counts(
         self,
@@ -221,21 +243,23 @@ class ScoreboardWidget(QFrame):
         *,
         visible: bool,
         accepted_best: float | None = None,
+        last_accepted: float | None = None,
     ) -> None:
-        self._summary_text = _summary_line(network_diff, best_diff, accepted_best)
+        self._summary_parts = (network_diff, best_diff, accepted_best, last_accepted)
         if not visible:
             self._end_celebration()
         show = bool(visible)
+        html = self._summary_html()
         if self._compact:
             self.diff_summary.setVisible(False)
             if self._external_summary is not None:
                 self._external_summary.setVisible(show)
                 if show and self._celebrate_timer is None:
-                    self._external_summary.setText(self._summary_text)
+                    self._external_summary.setText(html)
         else:
             self.diff_summary.setVisible(show)
             if show and self._celebrate_timer is None:
-                self.diff_summary.setText(self._summary_text)
+                self.diff_summary.setText(html)
 
     def celebrate_record(self) -> None:
         """Flash green + NEW RECORD for ~1.6s."""
@@ -243,7 +267,7 @@ class ScoreboardWidget(QFrame):
         if target is None or not target.isVisible():
             return
         self.setStyleSheet(_BOARD_QSS + _CELEBRATE_QSS)
-        target.setText(f"NEW RECORD  {self._summary_text}")
+        target.setText(self._summary_html(celebrate=True))
         if self._celebrate_timer is None:
             self._celebrate_timer = QTimer(self)
             self._celebrate_timer.setSingleShot(True)
@@ -263,7 +287,7 @@ class ScoreboardWidget(QFrame):
         self.setStyleSheet(_BOARD_QSS)
         target = self._active_summary_label()
         if target is not None:
-            target.setText(self._summary_text)
+            target.setText(self._summary_html())
 
     def stop_alerts(self) -> None:
         if self._celebrate_timer is not None:
@@ -327,12 +351,20 @@ class ScoreboardOverlayWindow(QWidget):
 
         self.diff_title = QLabel("")
         self.diff_title.setObjectName("diffSummaryCompact")
+        self.diff_title.setTextFormat(Qt.TextFormat.RichText)
         self.diff_title.setAlignment(
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
         )
         self.diff_title.setVisible(False)
         self.diff_title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         top.addWidget(self.diff_title, 1)
+
+        home = QPushButton("⌂")
+        home.setObjectName("scoreHome")
+        home.setCursor(Qt.CursorShape.PointingHandCursor)
+        home.setToolTip("Reset position (above system tray)")
+        home.clicked.connect(self.reset_to_tray_corner)
+        top.addWidget(home, 0)
 
         btn = QPushButton("×")
         btn.setObjectName("scoreClose")
@@ -376,12 +408,14 @@ class ScoreboardOverlayWindow(QWidget):
         *,
         visible: bool,
         accepted_best: float | None = None,
+        last_accepted: float | None = None,
     ) -> None:
         self.board.set_difficulty_row(
             network_diff,
             best_diff,
             visible=visible,
             accepted_best=accepted_best,
+            last_accepted=last_accepted,
         )
         self._after_content_resize()
 
@@ -397,6 +431,14 @@ class ScoreboardOverlayWindow(QWidget):
         x = geo.right() - self.width() - margin + 1
         y = geo.bottom() - self.height() - margin + 1
         self.move(max(geo.left() + margin, x), max(geo.top() + margin, y))
+
+    def reset_to_tray_corner(self) -> None:
+        """One-click: clear manual placement and dock above the system tray."""
+        self._user_placed = False
+        self._drag_offset = None
+        self.place_bottom_right()
+        if self.isVisible():
+            self.raise_()
 
     def show_overlay(self) -> None:
         # Fresh process → _user_placed is False → tray-top default.

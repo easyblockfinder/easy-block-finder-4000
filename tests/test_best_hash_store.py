@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(ROOT))
 
 from mining.best_hash_store import (  # noqa: E402
+    clear_best_hash_records,
     load_best_hash_state,
     upsert_record_if_better,
 )
@@ -263,3 +264,26 @@ def test_upsert_replaces_corrupt_existing_record(tmp_path, monkeypatch):
     )
     assert rec is not None
     assert load_best_hash_state()["records"]["btc"].gpu_best.nonce_hex == "ok"
+
+
+def test_clear_best_hash_records_network_and_all(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    for nid, nonce in (("btc", "b1"), ("bch", "c1")):
+        upsert_record_if_better(
+            nid,
+            hash_be_hex="00000000" + "11" * 28,
+            nonce_hex=nonce,
+            job_id="j",
+            nbits="1d00ffff",
+            network_difficulty_at_time=1.0,
+            kind="gpu",
+        )
+    assert set(load_best_hash_state()["records"]) == {"btc", "bch"}
+
+    clear_best_hash_records(network_id="btc")
+    st = load_best_hash_state()
+    assert "btc" not in st["records"]
+    assert st["records"]["bch"].gpu_best.nonce_hex == "c1"
+
+    clear_best_hash_records(network_id=None)
+    assert load_best_hash_state()["records"] == {}

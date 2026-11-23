@@ -78,7 +78,10 @@ __kernel void sha256d_search_audit(
     __global uint *best_buf,
     const uint track_best,
     __global const uint *audit_targets,
-    __global ulong *hist_wg
+    __global ulong *hist_wg,
+    const uint strategy,
+    const uint aff_a,
+    const uint aff_b
 ) {
     __local uint lkey[BEST_LOCAL_MAX * 8];
     __local uint lnonce[BEST_LOCAL_MAX];
@@ -92,7 +95,14 @@ __kernel void sha256d_search_audit(
     if (lid < (uint)AUDIT_N) lhist[lid] = 0u;
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    const uint nonce = nonce_base + tid;
+    uint nonce;
+    if (strategy == 1u) {
+        nonce = nonce_base - tid;
+    } else if (strategy == 2u) {
+        nonce = aff_a * (nonce_base + tid) + aff_b;
+    } else {
+        nonce = nonce_base + tid;
+    }
     uint h0 = 0, h1 = 0, h2 = 0, h3 = 0, h4 = 0, h5 = 0, h6 = 0, h7 = 0;
 
     if (do_hash) {

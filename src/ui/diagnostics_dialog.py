@@ -97,6 +97,7 @@ def build_diagnostics_text(
         f"Paused thermal: {getattr(stats, 'paused_thermal', False)}",
         f"Paused idle: {getattr(stats, 'paused_idle', False)}",
         f"Test mode: {getattr(stats, 'test_mode', False)}",
+        f"Search strategy: {getattr(stats, 'search_strategy', cfg.get('mining_search_strategy') or 'sequential')}",
         "",
         "--- Idle settings ---",
         f"Configured: {cfg.get('idle_settings_configured')}",

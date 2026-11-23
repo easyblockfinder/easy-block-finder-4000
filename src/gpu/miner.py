@@ -400,9 +400,14 @@ class GpuMiner:
         count: int,
         max_hits: int = 256,
         track_best: bool = False,
+        *,
+        strategy: int = 0,
+        aff_a: int = 1,
+        aff_b: int = 0,
     ) -> SearchResult:
         """
-        Tek kernel: [start_nonce, start_nonce+count) paralel.
+        Tek kernel: strategy maps logical (start_nonce + tid) → physical nonce.
+        strategy: 0=sequential, 1=reverse, 2=randomized affine.
         Only nonces that beat the target are returned to the host.
         raw_hit_count > max_hits sets truncated=True (overflow slots may be lost).
         """
@@ -415,7 +420,8 @@ class GpuMiner:
             raise ValueError(
                 f"track_best requires a power-of-two local_size <= 512 (got {ls})."
             )
-        if start_nonce + count - 1 > 0xFFFFFFFF:
+        # Sequential physical clamp only; reverse/random use host-validated logical span
+        if int(strategy) == 0 and start_nonce + count - 1 > 0xFFFFFFFF:
             count = 0xFFFFFFFF - start_nonce + 1
 
         cl = self._cl
@@ -449,6 +455,11 @@ class GpuMiner:
             self._host_best[8:] = 0
             cl.enqueue_copy(self._queue, self._d_best, self._host_best)
 
+        strat = int(strategy) & 0xFF
+        aa = int(aff_a) & 0xFFFFFFFF
+        bb = int(aff_b) & 0xFFFFFFFF
+        if strat == 2 and (aa & 1) == 0:
+            aa |= 1
         self._kernel.set_args(
             self._d_ms,
             np.uint32(t0),
@@ -462,6 +473,9 @@ class GpuMiner:
             np.uint32(int(count)),
             self._d_best,
             np.uint32(1 if track_best else 0),
+            np.uint32(strat),
+            np.uint32(aa),
+            np.uint32(bb),
         )
 
         local = int(self._local_size)
@@ -513,10 +527,14 @@ class GpuMiner:
         count: int,
         max_hits: int = 256,
         track_best: bool = True,
+        *,
+        strategy: int = 0,
+        aff_a: int = 1,
+        aff_b: int = 0,
     ) -> tuple[SearchResult, object]:
         """
-        Audit-only path: sha256d_search_audit + WG histogram.
-        Production search() is unchanged. Raises GpuUnavailableError if audit kernel missing.
+        Audit path: sha256d_search_audit + WG histogram (same strategy mapping).
+        Raises GpuUnavailableError if audit kernel missing.
         Returns (SearchResult, HistogramResult).
         """
         from audit.histogram import HistogramResult, sum_wg_histogram
@@ -536,7 +554,7 @@ class GpuMiner:
             raise ValueError(
                 f"track_best requires power-of-two local_size <= 512 (got {self._local_size})"
             )
-        if start_nonce + count - 1 > 0xFFFFFFFF:
+        if int(strategy) == 0 and start_nonce + count - 1 > 0xFFFFFFFF:
             count = 0xFFFFFFFF - start_nonce + 1
 
         cl = self._cl
@@ -582,6 +600,11 @@ class GpuMiner:
             self._host_best[8:] = 0
             cl.enqueue_copy(self._queue, self._d_best, self._host_best)
 
+        strat = int(strategy) & 0xFF
+        aa = int(aff_a) & 0xFFFFFFFF
+        bb = int(aff_b) & 0xFFFFFFFF
+        if strat == 2 and (aa & 1) == 0:
+            aa |= 1
         self._kernel_audit.set_args(
             self._d_ms,
             np.uint32(t0),
@@ -597,6 +620,9 @@ class GpuMiner:
             np.uint32(1 if track_best else 0),
             self._d_audit_tgt,
             self._d_hist_wg,
+            np.uint32(strat),
+            np.uint32(aa),
+            np.uint32(bb),
         )
         cl.enqueue_nd_range_kernel(
             self._queue, self._kernel_audit, (global_size,), (local,)

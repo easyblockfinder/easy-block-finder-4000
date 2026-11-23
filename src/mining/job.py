@@ -18,6 +18,13 @@ from .bitcoin import (
     share_target_from_difficulty,
     verify_header_against_targets,
 )
+from .search_strategy import (
+    SearchStrategy,
+    affine_from_seed,
+    batch_nonce_base,
+    seed_fingerprint,
+    seed_material,
+)
 
 
 @dataclass(frozen=True)
@@ -126,11 +133,16 @@ class JobSnapshot:
 
 @dataclass(frozen=True)
 class WorkBatch:
-    """allocate_batch result: scan interval + immutable snapshot."""
+    """allocate_batch result: logical scan window + immutable snapshot."""
 
     snapshot: JobSnapshot
-    start_nonce: int
+    start_nonce: int  # GPU nonce_base (strategy-dependent)
     count: int
+    logical_start: int = 0
+    strategy: str = "sequential"
+    affine_a: int = 1
+    affine_b: int = 0
+    seed_fp: str = ""
 
     @property
     def job_id(self) -> str:
@@ -145,7 +157,8 @@ class WorkBatch:
         return self.snapshot.session_id
 
     def header80(self) -> bytes:
-        return self.snapshot.header_for_nonce(self.start_nonce)
+        # Kernel overwrites nonce; midstate/tail come from current header prefix.
+        return self.snapshot.header_for_nonce(0)
 
     def is_submittable(self, current_epoch: int, current_session: int) -> bool:
         return self.snapshot.is_submittable(current_epoch, current_session)
@@ -168,12 +181,16 @@ class MiningJob:
     diff_at_notify: float = 0.0
 
     extranonce2: int = 0
-    nonce: int = 0
+    nonce: int = 0  # logical cursor in [0, 2^32)
     generation: int = 0
     # superseded: clean=false — yeni tahsis yok, in-flight submit OK
     superseded: bool = False
     # invalidated: clean=true / session dropped — in-flight submit prohibited
     invalidated: bool = False
+    search_strategy: SearchStrategy = SearchStrategy.SEQUENTIAL
+    _strategy_seed_fp: str = field(default="", repr=False)
+    _affine_a: int = field(default=1, repr=False)
+    _affine_b: int = field(default=0, repr=False)
 
     _merkle_root: bytes = field(default=b"", repr=False)
     _header_prefix: bytes = field(default=b"", repr=False)
@@ -262,28 +279,55 @@ class MiningJob:
     def extranonce2_hex(self) -> str:
         return extranonce2_bytes(self.extranonce2, self.extranonce2_size).hex()
 
+    def configure_search_strategy(
+        self,
+        strategy: SearchStrategy | str,
+        *,
+        work_family_id: str = "",
+        session_salt: str = "",
+    ) -> None:
+        """Bind strategy + seed for this job (call on create / after en2 bump)."""
+        if isinstance(strategy, str):
+            strategy = SearchStrategy(strategy)
+        self.search_strategy = strategy
+        seed = seed_material(
+            work_family_id=work_family_id or self.job_id,
+            extranonce2_hex=self.extranonce2_hex(),
+            strategy=strategy,
+            session_salt=session_salt,
+        )
+        self._strategy_seed_fp = seed_fingerprint(seed)
+        if strategy is SearchStrategy.RANDOMIZED:
+            aff = affine_from_seed(seed)
+            self._affine_a = int(aff.a)
+            self._affine_b = int(aff.b)
+        else:
+            self._affine_a = 1
+            self._affine_b = 0
+
     def allocate_batch(
         self,
         count: int,
         *,
         validity_epoch: int = 0,
         session_id: int = 0,
+        work_family_id: str = "",
     ) -> Optional[WorkBatch]:
         """
-        New scan range + immutable snapshot.
-        Final 2^32 slice uses the OLD extranonce/header; bump on the next allocate.
+        Logical cursor allocate + immutable snapshot.
+        Final 2^32 logical slice uses the OLD extranonce/header; bump next allocate.
         """
         if not self.accept_new_work():
             return None
         if self._needs_extranonce_bump:
-            self._bump_extranonce2()
+            self._bump_extranonce2(work_family_id=work_family_id)
             self._needs_extranonce_bump = False
             self.nonce = 0
 
-        start = self.nonce
+        start = int(self.nonce) & 0xFFFFFFFF
         space = 0x100000000 - start
         if space <= 0:
-            self._bump_extranonce2()
+            self._bump_extranonce2(work_family_id=work_family_id)
             start = 0
             space = 0x100000000
 
@@ -292,10 +336,19 @@ class MiningJob:
             return None
 
         snap = self.snapshot(validity_epoch=validity_epoch, session_id=session_id)
-        batch = WorkBatch(snapshot=snap, start_nonce=start, count=take)
+        base = batch_nonce_base(start, self.search_strategy)
+        batch = WorkBatch(
+            snapshot=snap,
+            start_nonce=int(base),
+            count=take,
+            logical_start=start,
+            strategy=self.search_strategy.value,
+            affine_a=int(self._affine_a),
+            affine_b=int(self._affine_b),
+            seed_fp=str(self._strategy_seed_fp),
+        )
         nxt = start + take
         if nxt >= 0x100000000:
-            # This batch [start, 2^32) — old header. The next allocate increases the extranonce.
             self.nonce = 0
             self._needs_extranonce_bump = True
         else:
@@ -309,10 +362,19 @@ class MiningJob:
             return 0, 0
         return batch.start_nonce, batch.count
 
-    def _bump_extranonce2(self) -> None:
+    def bump_extranonce2(self, *, work_family_id: str = "") -> None:
+        """Advance extranonce2 and rebuild coinbase/Merkle/midstate (Game Mode boards)."""
+        self._bump_extranonce2(work_family_id=work_family_id)
+
+    def _bump_extranonce2(self, *, work_family_id: str = "") -> None:
         limit = 1 << (8 * self.extranonce2_size)
         self.extranonce2 = (self.extranonce2 + 1) % limit
         self.rebuild_work()
+        # Refresh affine seed for new extranonce2 (same strategy)
+        self.configure_search_strategy(
+            self.search_strategy,
+            work_family_id=work_family_id or self.job_id,
+        )
 
     def header_for_nonce(self, nonce: int) -> bytes:
         return self._header_prefix + nonce.to_bytes(4, "little")

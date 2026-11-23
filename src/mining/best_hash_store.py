@@ -142,6 +142,22 @@ def load_best_hash_state(*, strict: bool = False) -> dict:
     return {"mode": mode, "records": records}
 
 
+def clear_best_hash_records(*, network_id: str | None = None) -> None:
+    """
+    Clear persisted GPU BEST / ACC BEST records.
+    network_id=None → all networks; otherwise only that network.
+    """
+    state = load_best_hash_state(strict=False)
+    mode = str(state.get("mode") or DEFAULT_MODE)
+    records: dict[str, NetworkBestRecords] = dict(state.get("records") or {})
+    if network_id is None:
+        records = {}
+    else:
+        nid = str(network_id).strip().lower()
+        records.pop(nid, None)
+    save_best_hash_state(mode, records)
+
+
 def save_best_hash_state(mode: str, records: dict[str, NetworkBestRecords]) -> None:
     path = _store_path()
     out_records: dict[str, Any] = {}

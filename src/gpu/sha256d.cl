@@ -49,6 +49,12 @@ inline int key_less_lg(__local const uint *a, volatile __global const uint *b) {
     return 0;
 }
 
+/*
+ * Search strategy (host-selected, session-locked):
+ *   0 = sequential: nonce = nonce_base + tid
+ *   1 = reverse:    nonce = nonce_base - tid
+ *   2 = randomized: nonce = aff_a * (nonce_base + tid) + aff_b  (uint32; aff_a odd)
+ */
 __kernel void sha256d_search(
     __global const uint *midstate,
     const uint tail0,
@@ -61,7 +67,10 @@ __kernel void sha256d_search(
     const uint max_out,
     const uint count,
     __global uint *best_buf,
-    const uint track_best
+    const uint track_best,
+    const uint strategy,
+    const uint aff_a,
+    const uint aff_b
 ) {
     __local uint lkey[BEST_LOCAL_MAX * 8];
     __local uint lnonce[BEST_LOCAL_MAX];
@@ -71,7 +80,14 @@ __kernel void sha256d_search(
     const int valid = (tid < count);
     if (!valid && !track_best) return;
 
-    const uint nonce = nonce_base + tid;
+    uint nonce;
+    if (strategy == 1u) {
+        nonce = nonce_base - tid;
+    } else if (strategy == 2u) {
+        nonce = aff_a * (nonce_base + tid) + aff_b;
+    } else {
+        nonce = nonce_base + tid;
+    }
 
     /* Midstate private — host caches while header[0:64] is fixed */
     const uint m0 = midstate[0];
